@@ -7,6 +7,9 @@ class GroundItemSystem {
   }
 
   spawn(itemType, quantity, x, y) {
+    if (!ItemCatalog[itemType]) {
+      throw new Error(`Неизвестный тип предмета: ${itemType}.`);
+    }
     const textureKey = this.textureKeys[itemType];
     if (!textureKey || !Number.isInteger(quantity) || quantity <= 0
       || !Number.isFinite(x) || !Number.isFinite(y)) {
@@ -43,6 +46,29 @@ class GroundItemSystem {
 
   getItems() {
     return this.items.filter((item) => item.active);
+  }
+
+  remove(itemId) {
+    const item = this.items.find((candidate) => candidate.id === itemId && candidate.active);
+    if (!item) return false;
+
+    item.active = false;
+    if (item.visualObject && item.visualObject.active) item.visualObject.destroy();
+    if (item.quantityText && item.quantityText.active) item.quantityText.destroy();
+    this.items = this.items.filter((candidate) => candidate !== item);
+    return true;
+  }
+
+  updateQuantity(itemId, quantity) {
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      throw new Error(`Количество предметов должно быть положительным целым числом: ${quantity}.`);
+    }
+    const item = this.items.find((candidate) => candidate.id === itemId && candidate.active);
+    if (!item) return false;
+
+    item.quantity = quantity;
+    item.quantityText.setText(String(quantity));
+    return true;
   }
 
   clear() {

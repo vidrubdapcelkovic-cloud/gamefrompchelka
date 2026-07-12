@@ -7,9 +7,11 @@ const requiredRelativePaths = [
   'lib/phaser.min.js',
   'src/data/FixedMapData.js',
   'src/data/FixedWorldObjects.js',
+  'src/data/ItemCatalog.js',
   'src/world/WorldGrid.js',
   'src/systems/InteractionSystem.js',
   'src/systems/HoldActionSystem.js',
+  'src/systems/InventoryModel.js',
   'src/systems/GroundItemSystem.js',
   'src/VirtualJoystick.js',
   'src/GameScene.js',
@@ -39,9 +41,11 @@ const indexHtml = fs.readFileSync(requireFile('index.html'), 'utf8');
 const phaser = fs.readFileSync(requireFile('lib/phaser.min.js'), 'utf8');
 const fixedMapData = fs.readFileSync(requireFile('src/data/FixedMapData.js'), 'utf8');
 const fixedWorldObjects = fs.readFileSync(requireFile('src/data/FixedWorldObjects.js'), 'utf8');
+const itemCatalog = fs.readFileSync(requireFile('src/data/ItemCatalog.js'), 'utf8');
 const worldGrid = fs.readFileSync(requireFile('src/world/WorldGrid.js'), 'utf8');
 const interactionSystem = fs.readFileSync(requireFile('src/systems/InteractionSystem.js'), 'utf8');
 const holdActionSystem = fs.readFileSync(requireFile('src/systems/HoldActionSystem.js'), 'utf8');
+const inventoryModel = fs.readFileSync(requireFile('src/systems/InventoryModel.js'), 'utf8');
 const groundItemSystem = fs.readFileSync(requireFile('src/systems/GroundItemSystem.js'), 'utf8');
 const virtualJoystick = fs.readFileSync(requireFile('src/VirtualJoystick.js'), 'utf8');
 const gameScene = fs.readFileSync(requireFile('src/GameScene.js'), 'utf8');
@@ -73,9 +77,11 @@ const autonomousHtml = `<!doctype html>
 ${safeScript(phaser)}
 ${safeScript(fixedMapData)}
 ${safeScript(fixedWorldObjects)}
+${safeScript(itemCatalog)}
 ${safeScript(worldGrid)}
 ${safeScript(interactionSystem)}
 ${safeScript(holdActionSystem)}
+${safeScript(inventoryModel)}
 ${safeScript(groundItemSystem)}
 ${safeScript(virtualJoystick)}
 ${safeScript(gameScene)}
@@ -98,9 +104,11 @@ const pagesHtml = `<!doctype html>
     <script src="./lib/phaser.min.js"></script>
     <script src="./src/data/FixedMapData.js"></script>
     <script src="./src/data/FixedWorldObjects.js"></script>
+    <script src="./src/data/ItemCatalog.js"></script>
     <script src="./src/world/WorldGrid.js"></script>
     <script src="./src/systems/InteractionSystem.js"></script>
     <script src="./src/systems/HoldActionSystem.js"></script>
+    <script src="./src/systems/InventoryModel.js"></script>
     <script src="./src/systems/GroundItemSystem.js"></script>
     <script src="./src/VirtualJoystick.js"></script>
     <script src="./src/GameScene.js"></script>
@@ -134,9 +142,11 @@ writeFileWithSize(pagesCssPath, pageCss);
 fs.copyFileSync(requireFile('lib/phaser.min.js'), path.join(docsLibDirectory, 'phaser.min.js'));
 fs.copyFileSync(requireFile('src/data/FixedMapData.js'), path.join(docsDataDirectory, 'FixedMapData.js'));
 fs.copyFileSync(requireFile('src/data/FixedWorldObjects.js'), path.join(docsDataDirectory, 'FixedWorldObjects.js'));
+fs.copyFileSync(requireFile('src/data/ItemCatalog.js'), path.join(docsDataDirectory, 'ItemCatalog.js'));
 fs.copyFileSync(requireFile('src/world/WorldGrid.js'), path.join(docsWorldDirectory, 'WorldGrid.js'));
 fs.copyFileSync(requireFile('src/systems/InteractionSystem.js'), path.join(docsSystemsDirectory, 'InteractionSystem.js'));
 fs.copyFileSync(requireFile('src/systems/HoldActionSystem.js'), path.join(docsSystemsDirectory, 'HoldActionSystem.js'));
+fs.copyFileSync(requireFile('src/systems/InventoryModel.js'), path.join(docsSystemsDirectory, 'InventoryModel.js'));
 fs.copyFileSync(requireFile('src/systems/GroundItemSystem.js'), path.join(docsSystemsDirectory, 'GroundItemSystem.js'));
 fs.copyFileSync(requireFile('src/VirtualJoystick.js'), path.join(docsSrcDirectory, 'VirtualJoystick.js'));
 fs.copyFileSync(requireFile('src/GameScene.js'), path.join(docsSrcDirectory, 'GameScene.js'));

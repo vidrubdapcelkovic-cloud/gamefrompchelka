@@ -125,6 +125,12 @@ const FixedWorldObjects = Object.freeze([
   Object.freeze({ id: 'berry-08', type: 'BERRY_BUSH', col: 38, row: 31 })
 ]);
 
+const ItemCatalog = Object.freeze({
+  WOOD: Object.freeze({ id: 'WOOD', displayName: 'Дерево', maxStack: 99 }),
+  STONE: Object.freeze({ id: 'STONE', displayName: 'Камень', maxStack: 99 }),
+  BERRIES: Object.freeze({ id: 'BERRIES', displayName: 'Ягоды', maxStack: 99 })
+});
+
 class WorldGrid {
   constructor(mapData = FixedMapData) {
     this.tileSize = mapData.tileSize;
@@ -305,6 +311,59 @@ class HoldActionSystem {
   }
 }
 
+const INVENTORY_SLOT_COUNT = 25;
+const QUICK_SLOT_COUNT = 5;
+
+class InventoryModel {
+  constructor() {
+    this.slotCount = INVENTORY_SLOT_COUNT;
+    this.quickSlotCount = QUICK_SLOT_COUNT;
+    this.slots = Array(INVENTORY_SLOT_COUNT).fill(null);
+  }
+
+  addItem(itemType, quantity) {
+    const itemDefinition = ItemCatalog[itemType];
+    if (!itemDefinition) throw new Error(`Неизвестный тип предмета: ${itemType}.`);
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      throw new Error(`Количество предметов должно быть положительным целым числом: ${quantity}.`);
+    }
+
+    let remaining = quantity;
+    this.slots.forEach((slot) => {
+      if (remaining === 0 || slot === null || slot.itemType !== itemType) return;
+      const available = itemDefinition.maxStack - slot.quantity;
+      const added = Math.min(available, remaining);
+      slot.quantity += added;
+      remaining -= added;
+    });
+
+    for (let index = 0; index < this.slots.length && remaining > 0; index += 1) {
+      if (this.slots[index] !== null) continue;
+      const added = Math.min(itemDefinition.maxStack, remaining);
+      this.slots[index] = { itemType, quantity: added };
+      remaining -= added;
+    }
+
+    return remaining;
+  }
+
+  getSlots() {
+    return this.slots.map((slot) => (slot === null ? null : { ...slot }));
+  }
+
+  getTotal(itemType) {
+    if (!ItemCatalog[itemType]) throw new Error(`Неизвестный тип предмета: ${itemType}.`);
+    return this.slots.reduce(
+      (total, slot) => total + (slot && slot.itemType === itemType ? slot.quantity : 0),
+      0
+    );
+  }
+
+  clear() {
+    this.slots.fill(null);
+  }
+}
+
 class GroundItemSystem {
   constructor(scene, textureKeys) {
     this.scene = scene;
@@ -314,6 +373,9 @@ class GroundItemSystem {
   }
 
   spawn(itemType, quantity, x, y) {
+    if (!ItemCatalog[itemType]) {
+      throw new Error(`Неизвестный тип предмета: ${itemType}.`);
+    }
     const textureKey = this.textureKeys[itemType];
     if (!textureKey || !Number.isInteger(quantity) || quantity <= 0
       || !Number.isFinite(x) || !Number.isFinite(y)) {
@@ -350,6 +412,29 @@ class GroundItemSystem {
 
   getItems() {
     return this.items.filter((item) => item.active);
+  }
+
+  remove(itemId) {
+    const item = this.items.find((candidate) => candidate.id === itemId && candidate.active);
+    if (!item) return false;
+
+    item.active = false;
+    if (item.visualObject && item.visualObject.active) item.visualObject.destroy();
+    if (item.quantityText && item.quantityText.active) item.quantityText.destroy();
+    this.items = this.items.filter((candidate) => candidate !== item);
+    return true;
+  }
+
+  updateQuantity(itemId, quantity) {
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      throw new Error(`Количество предметов должно быть положительным целым числом: ${quantity}.`);
+    }
+    const item = this.items.find((candidate) => candidate.id === itemId && candidate.active);
+    if (!item) return false;
+
+    item.quantity = quantity;
+    item.quantityText.setText(String(quantity));
+    return true;
   }
 
   clear() {
@@ -522,6 +607,7 @@ const WORLD_OBJECT_DROPS = Object.freeze({
 });
 const WORLD_DEPTH_SCALE = 0.1;
 const INTERFACE_DEPTH = 2000;
+const GROUND_ITEM_PICKUP_RADIUS = 28;
 
 class GameScene extends Phaser.Scene {
   constructor() {
@@ -529,6 +615,7 @@ class GameScene extends Phaser.Scene {
   }
 
   create() {
+    this.inventoryModel = new InventoryModel();
     this.createWorld();
     this.createPlayer();
     this.createWorldObjects();
@@ -1275,8 +1362,12 @@ class GameScene extends Phaser.Scene {
 
     const drop = WORLD_OBJECT_DROPS[runtimeObject.type];
     this.groundItemSystem.spawn(drop.itemType, drop.quantity, position.x, position.y);
+    this.showInteractionMessage(`${drop.itemType} ×${drop.quantity}`);
+  }
+
+  showInteractionMessage(message) {
     this.interactionResultText
-      .setText(`${drop.itemType} ×${drop.quantity}`)
+      .setText(message)
       .setVisible(true);
 
     this.interactionMessageTimer.reset({
@@ -1319,6 +1410,7 @@ class GameScene extends Phaser.Scene {
       this.groundItemSystem = null;
     }
     if (this.runtimeWorldObjects) this.runtimeWorldObjects.clear();
+    if (this.inventoryModel) this.inventoryModel.clear();
 
     this.actionButton.off('pointerdown', this.onActionPointerDown);
     this.actionButton.off('pointerout', this.onActionPointerOut);
@@ -1423,6 +1515,48 @@ class GameScene extends Phaser.Scene {
       fontSize: '15px',
       color: '#e7edf2'
     }).setScrollFactor(0).setDepth(INTERFACE_DEPTH);
+
+    this.inventoryHudText = this.add.text(34, 122, '', {
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '16px',
+      color: '#fff4b0',
+      backgroundColor: '#111820d9',
+      padding: { x: 10, y: 6 }
+    }).setScrollFactor(0).setDepth(INTERFACE_DEPTH);
+    this.updateInventoryHud();
+  }
+
+  updateInventoryHud() {
+    this.inventoryHudText.setText(
+      `WOOD: ${this.inventoryModel.getTotal('WOOD')}  `
+      + `STONE: ${this.inventoryModel.getTotal('STONE')}  `
+      + `BERRIES: ${this.inventoryModel.getTotal('BERRIES')}`
+    );
+  }
+
+  collectNearbyGroundItems() {
+    const radiusSquared = GROUND_ITEM_PICKUP_RADIUS * GROUND_ITEM_PICKUP_RADIUS;
+    const nearbyItems = this.groundItemSystem.getItems().filter((item) => {
+      const offsetX = item.x - this.player.x;
+      const offsetY = item.y - this.player.y;
+      return offsetX * offsetX + offsetY * offsetY <= radiusSquared;
+    });
+
+    nearbyItems.forEach((item) => {
+      if (!item.active) return;
+      const originalQuantity = item.quantity;
+      const remainder = this.inventoryModel.addItem(item.itemType, originalQuantity);
+      const pickedUp = originalQuantity - remainder;
+      if (pickedUp === 0) return;
+
+      if (remainder === 0) {
+        this.groundItemSystem.remove(item.id);
+      } else {
+        this.groundItemSystem.updateQuantity(item.id, remainder);
+      }
+      this.updateInventoryHud();
+      this.showInteractionMessage(`Подобрано: ${item.itemType} ×${pickedUp}`);
+    });
   }
 
   update(time, delta) {
@@ -1445,6 +1579,7 @@ class GameScene extends Phaser.Scene {
 
     this.player.setVelocity(movement.x, movement.y);
     this.updateWorldDepth(this.player);
+    this.collectNearbyGroundItems();
     this.updateInteractionTarget();
 
     if (Phaser.Input.Keyboard.JustDown(this.interactKey)) {

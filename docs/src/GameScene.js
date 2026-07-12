@@ -8,6 +8,7 @@ const WORLD_OBJECT_DROPS = Object.freeze({
 });
 const WORLD_DEPTH_SCALE = 0.1;
 const INTERFACE_DEPTH = 2000;
+const GROUND_ITEM_PICKUP_RADIUS = 28;
 
 class GameScene extends Phaser.Scene {
   constructor() {
@@ -15,6 +16,7 @@ class GameScene extends Phaser.Scene {
   }
 
   create() {
+    this.inventoryModel = new InventoryModel();
     this.createWorld();
     this.createPlayer();
     this.createWorldObjects();
@@ -761,8 +763,12 @@ class GameScene extends Phaser.Scene {
 
     const drop = WORLD_OBJECT_DROPS[runtimeObject.type];
     this.groundItemSystem.spawn(drop.itemType, drop.quantity, position.x, position.y);
+    this.showInteractionMessage(`${drop.itemType} ×${drop.quantity}`);
+  }
+
+  showInteractionMessage(message) {
     this.interactionResultText
-      .setText(`${drop.itemType} ×${drop.quantity}`)
+      .setText(message)
       .setVisible(true);
 
     this.interactionMessageTimer.reset({
@@ -805,6 +811,7 @@ class GameScene extends Phaser.Scene {
       this.groundItemSystem = null;
     }
     if (this.runtimeWorldObjects) this.runtimeWorldObjects.clear();
+    if (this.inventoryModel) this.inventoryModel.clear();
 
     this.actionButton.off('pointerdown', this.onActionPointerDown);
     this.actionButton.off('pointerout', this.onActionPointerOut);
@@ -909,6 +916,48 @@ class GameScene extends Phaser.Scene {
       fontSize: '15px',
       color: '#e7edf2'
     }).setScrollFactor(0).setDepth(INTERFACE_DEPTH);
+
+    this.inventoryHudText = this.add.text(34, 122, '', {
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '16px',
+      color: '#fff4b0',
+      backgroundColor: '#111820d9',
+      padding: { x: 10, y: 6 }
+    }).setScrollFactor(0).setDepth(INTERFACE_DEPTH);
+    this.updateInventoryHud();
+  }
+
+  updateInventoryHud() {
+    this.inventoryHudText.setText(
+      `WOOD: ${this.inventoryModel.getTotal('WOOD')}  `
+      + `STONE: ${this.inventoryModel.getTotal('STONE')}  `
+      + `BERRIES: ${this.inventoryModel.getTotal('BERRIES')}`
+    );
+  }
+
+  collectNearbyGroundItems() {
+    const radiusSquared = GROUND_ITEM_PICKUP_RADIUS * GROUND_ITEM_PICKUP_RADIUS;
+    const nearbyItems = this.groundItemSystem.getItems().filter((item) => {
+      const offsetX = item.x - this.player.x;
+      const offsetY = item.y - this.player.y;
+      return offsetX * offsetX + offsetY * offsetY <= radiusSquared;
+    });
+
+    nearbyItems.forEach((item) => {
+      if (!item.active) return;
+      const originalQuantity = item.quantity;
+      const remainder = this.inventoryModel.addItem(item.itemType, originalQuantity);
+      const pickedUp = originalQuantity - remainder;
+      if (pickedUp === 0) return;
+
+      if (remainder === 0) {
+        this.groundItemSystem.remove(item.id);
+      } else {
+        this.groundItemSystem.updateQuantity(item.id, remainder);
+      }
+      this.updateInventoryHud();
+      this.showInteractionMessage(`Подобрано: ${item.itemType} ×${pickedUp}`);
+    });
   }
 
   update(time, delta) {
@@ -931,6 +980,7 @@ class GameScene extends Phaser.Scene {
 
     this.player.setVelocity(movement.x, movement.y);
     this.updateWorldDepth(this.player);
+    this.collectNearbyGroundItems();
     this.updateInteractionTarget();
 
     if (Phaser.Input.Keyboard.JustDown(this.interactKey)) {
