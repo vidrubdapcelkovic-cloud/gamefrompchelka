@@ -11,6 +11,13 @@ class InteractionSystem {
     this.currentTarget = null;
   }
 
+  removeTarget(id) {
+    this.targets = this.targets.filter((target) => target.id !== id);
+    if (this.currentTarget && this.currentTarget.id === id) {
+      this.currentTarget = null;
+    }
+  }
+
   update(playerX, playerY) {
     let nearestTarget = null;
     let nearestDistanceSquared = this.radiusSquared;

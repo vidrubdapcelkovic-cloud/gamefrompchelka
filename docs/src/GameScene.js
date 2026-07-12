@@ -1,6 +1,11 @@
 const PLAYER_SPEED = 260;
 const SURFACE_TILE_INDICES = Object.freeze({ G: 0, S: 1, W: 2, R: 3 });
 const WORLD_OBJECT_TYPES = Object.freeze(['TREE', 'ROCK', 'BERRY_BUSH']);
+const WORLD_OBJECT_DROPS = Object.freeze({
+  TREE: Object.freeze({ itemType: 'WOOD', quantity: 3 }),
+  ROCK: Object.freeze({ itemType: 'STONE', quantity: 2 }),
+  BERRY_BUSH: Object.freeze({ itemType: 'BERRIES', quantity: 2 })
+});
 const WORLD_DEPTH_SCALE = 0.1;
 const INTERFACE_DEPTH = 2000;
 
@@ -237,11 +242,18 @@ class GameScene extends Phaser.Scene {
   createWorldObjects() {
     this.validateWorldObjects();
     this.createWorldObjectTextures();
+    this.createGroundItemTextures();
 
     this.worldObjects = [];
     this.treeBlockers = [];
     this.interactionTargets = [];
+    this.runtimeWorldObjects = new Map();
     this.blockingWorldObjects = this.physics.add.staticGroup();
+    this.groundItemSystem = new GroundItemSystem(this, {
+      WOOD: 'temporary-ground-wood',
+      STONE: 'temporary-ground-stone',
+      BERRIES: 'temporary-ground-berries'
+    });
 
     FixedWorldObjects.forEach((objectData) => {
       const position = this.worldGrid.cellToWorldCenter(objectData.col, objectData.row);
@@ -263,6 +275,7 @@ class GameScene extends Phaser.Scene {
 
       let interactionX = gameObject.x;
       let interactionY = gameObject.y;
+      let blockerObject = null;
 
       if (objectData.type === 'TREE') {
         const treeBounds = gameObject.getBounds();
@@ -278,16 +291,18 @@ class GameScene extends Phaser.Scene {
         blocker.setData('col', objectData.col);
         blocker.setData('row', objectData.row);
         this.treeBlockers.push(blocker);
+        blockerObject = blocker;
         interactionX = blocker.x;
         interactionY = blocker.y;
       } else if (objectData.type === 'ROCK') {
         gameObject.body.setSize(24, 18);
         gameObject.body.setOffset(4, 14);
         gameObject.refreshBody();
+        blockerObject = gameObject;
       }
 
       this.worldObjects.push(gameObject);
-      this.interactionTargets.push({
+      const interactionTarget = {
         id: objectData.id,
         type: objectData.type,
         col: objectData.col,
@@ -295,6 +310,17 @@ class GameScene extends Phaser.Scene {
         interactionX,
         interactionY,
         visualObject: gameObject
+      };
+      this.interactionTargets.push(interactionTarget);
+      this.runtimeWorldObjects.set(objectData.id, {
+        id: objectData.id,
+        type: objectData.type,
+        col: objectData.col,
+        row: objectData.row,
+        active: true,
+        visualObject: gameObject,
+        blockerObject,
+        interactionTarget
       });
     });
 
@@ -402,6 +428,37 @@ class GameScene extends Phaser.Scene {
       bush.generateTexture('temporary-berry-bush', 32, 32);
       bush.destroy();
     }
+  }
+
+  createGroundItemTextures() {
+    const definitions = [
+      ['temporary-ground-wood', 0x9a6336, (graphics) => {
+        graphics.fillRect(2, 7, 16, 6);
+        graphics.fillStyle(0xc58a50, 1);
+        graphics.fillRect(4, 5, 12, 3);
+      }],
+      ['temporary-ground-stone', 0x747d86, (graphics) => {
+        graphics.fillRoundedRect(2, 4, 16, 13, 5);
+        graphics.fillStyle(0xa8b0b7, 1);
+        graphics.fillRect(6, 5, 7, 3);
+      }],
+      ['temporary-ground-berries', 0xc53f57, (graphics) => {
+        graphics.fillCircle(6, 10, 5);
+        graphics.fillCircle(14, 10, 5);
+        graphics.fillCircle(10, 5, 5);
+        graphics.fillStyle(0x3f7d46, 1);
+        graphics.fillRect(9, 0, 3, 4);
+      }]
+    ];
+
+    definitions.forEach(([textureKey, color, draw]) => {
+      if (this.textures.exists(textureKey)) return;
+      const graphics = this.make.graphics({ x: 0, y: 0, add: false });
+      graphics.fillStyle(color, 1);
+      draw(graphics);
+      graphics.generateTexture(textureKey, 20, 20);
+      graphics.destroy();
+    });
   }
 
   validateTreeBlockerGeometry() {
@@ -674,8 +731,38 @@ class GameScene extends Phaser.Scene {
   }
 
   completeInteraction(target) {
+    const runtimeObject = this.runtimeWorldObjects.get(target.id);
+    if (!runtimeObject || !runtimeObject.active) return;
+
+    const position = this.worldGrid.cellToWorldCenter(runtimeObject.col, runtimeObject.row);
+    if (!this.worldGrid.isInside(runtimeObject.col, runtimeObject.row)
+      || !this.worldGrid.isWalkable(runtimeObject.col, runtimeObject.row)
+      || position === null) {
+      throw new Error(
+        `Нельзя создать предмет после добычи ${runtimeObject.id} `
+        + `(col: ${runtimeObject.col}, row: ${runtimeObject.row}).`
+      );
+    }
+
+    runtimeObject.active = false;
+    this.interactionSystem.removeTarget(runtimeObject.id);
+    this.targetMarker.setVisible(false);
+    this.hideHoldProgress();
+
+    if (runtimeObject.visualObject && runtimeObject.visualObject.active) {
+      runtimeObject.visualObject.destroy();
+    }
+    if (runtimeObject.blockerObject
+      && runtimeObject.blockerObject !== runtimeObject.visualObject
+      && runtimeObject.blockerObject.active) {
+      runtimeObject.blockerObject.destroy();
+    }
+    this.runtimeWorldObjects.delete(runtimeObject.id);
+
+    const drop = WORLD_OBJECT_DROPS[runtimeObject.type];
+    this.groundItemSystem.spawn(drop.itemType, drop.quantity, position.x, position.y);
     this.interactionResultText
-      .setText(`${target.type}: действие завершено`)
+      .setText(`${drop.itemType} ×${drop.quantity}`)
       .setVisible(true);
 
     this.interactionMessageTimer.reset({
@@ -713,6 +800,11 @@ class GameScene extends Phaser.Scene {
     if (this.interactionCleanupDone) return;
     this.interactionCleanupDone = true;
     this.cancelInteractionHold();
+    if (this.groundItemSystem) {
+      this.groundItemSystem.clear();
+      this.groundItemSystem = null;
+    }
+    if (this.runtimeWorldObjects) this.runtimeWorldObjects.clear();
 
     this.actionButton.off('pointerdown', this.onActionPointerDown);
     this.actionButton.off('pointerout', this.onActionPointerOut);
