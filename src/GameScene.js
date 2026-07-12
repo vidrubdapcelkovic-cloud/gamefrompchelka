@@ -17,6 +17,7 @@ class GameScene extends Phaser.Scene {
 
   create() {
     this.inventoryModel = new InventoryModel();
+    this.craftingModel = new CraftingModel(this.inventoryModel);
     this.playerStatsModel = new PlayerStatsModel();
     this.isDeathHandled = false;
     this.createWorld();
@@ -28,6 +29,7 @@ class GameScene extends Phaser.Scene {
     this.createInteractionInterface();
     this.createVirtualJoystick();
     this.createInventoryUI();
+    this.createCraftingUI();
     this.createSurvivalInterface();
     this.registerLifecycleHandlers();
   }
@@ -454,6 +456,19 @@ class GameScene extends Phaser.Scene {
         graphics.fillCircle(10, 5, 5);
         graphics.fillStyle(0x3f7d46, 1);
         graphics.fillRect(9, 0, 3, 4);
+      }],
+      ['temporary-stone-axe', 0x8c613c, (graphics) => {
+        graphics.fillRect(9, 4, 3, 15);
+        graphics.fillStyle(0x9099a1, 1);
+        graphics.fillRect(5, 2, 11, 6);
+        graphics.fillRect(3, 4, 4, 4);
+      }],
+      ['temporary-stone-pickaxe', 0x8c613c, (graphics) => {
+        graphics.fillRect(9, 5, 3, 14);
+        graphics.fillStyle(0x9099a1, 1);
+        graphics.fillRect(3, 2, 14, 4);
+        graphics.fillRect(2, 4, 4, 3);
+        graphics.fillRect(15, 4, 3, 3);
       }]
     ];
 
@@ -613,7 +628,7 @@ class GameScene extends Phaser.Scene {
 
     this.onActionPointerDown = (pointer) => {
       if (this.isDeathHandled) return;
-      if (this.inventoryUI && this.inventoryUI.isOpen) return;
+      if (this.isBlockingPanelOpen()) return;
       if (this.actionPointerId !== null || this.interactionSystem.getCurrentTarget() === null) return;
 
       this.actionPointerId = pointer.id;
@@ -682,6 +697,7 @@ class GameScene extends Phaser.Scene {
 
   startInteractionHold(source) {
     if (this.isDeathHandled) return false;
+    if (this.isBlockingPanelOpen()) return false;
     const target = this.interactionSystem.getCurrentTarget();
     if (target === null || this.holdInputSource !== null) return false;
 
@@ -945,10 +961,40 @@ class GameScene extends Phaser.Scene {
       {
         WOOD: 'temporary-ground-wood',
         STONE: 'temporary-ground-stone',
-        BERRIES: 'temporary-ground-berries'
+        BERRIES: 'temporary-ground-berries',
+        STONE_AXE: 'temporary-stone-axe',
+        STONE_PICKAXE: 'temporary-stone-pickaxe'
       },
       (isOpen) => this.handleInventoryOpenChanged(isOpen)
     );
+  }
+
+  createCraftingUI() {
+    this.craftingUI = new CraftingUI(
+      this,
+      this.craftingModel,
+      (isOpen) => this.handleCraftingOpenChanged(isOpen),
+      (result, recipe) => this.handleCraftResult(result, recipe)
+    );
+  }
+
+  isBlockingPanelOpen() {
+    return Boolean(
+      (this.inventoryUI && this.inventoryUI.isOpen)
+      || (this.craftingUI && this.craftingUI.isOpen)
+    );
+  }
+
+  handleCraftResult(result, recipe) {
+    if (result.success) {
+      this.inventoryUI.updateFromModel();
+      this.updateInventoryHud();
+      this.showInteractionMessage(`Создано: ${recipe.displayName}`);
+    } else if (result.reason === 'missingIngredients') {
+      this.showInteractionMessage('Недостаточно ресурсов');
+    } else if (result.reason === 'noSpace') {
+      this.showInteractionMessage('Нет места в инвентаре');
+    }
   }
 
   createSurvivalInterface() {
@@ -980,7 +1026,7 @@ class GameScene extends Phaser.Scene {
 
     this.onUsePointerDown = (pointer, localX, localY, event) => {
       if (event && event.stopPropagation) event.stopPropagation();
-      if (this.usePointerId !== null || this.isDeathHandled || this.inventoryUI.isOpen) return;
+      if (this.usePointerId !== null || this.isDeathHandled || this.isBlockingPanelOpen()) return;
       this.usePointerId = pointer.id;
       this.useNativePointerId = pointer.event ? pointer.event.pointerId : null;
       this.useButton.setScale(0.92);
@@ -1030,7 +1076,7 @@ class GameScene extends Phaser.Scene {
   }
 
   tryUseActiveItem() {
-    if (this.isDeathHandled || this.inventoryUI.isOpen) return false;
+    if (this.isDeathHandled || this.isBlockingPanelOpen()) return false;
     const slotIndex = this.inventoryUI.getActiveHotbarIndex();
     const slot = this.inventoryModel.getSlot(slotIndex);
     if (slot === null) {
@@ -1070,6 +1116,7 @@ class GameScene extends Phaser.Scene {
     this.resetActionButton();
     this.resetUseButton();
     if (this.inventoryUI && this.inventoryUI.isOpen) this.inventoryUI.closePanel();
+    if (this.craftingUI && this.craftingUI.isOpen) this.craftingUI.closePanel();
     this.targetMarker.setVisible(false);
     this.useButton.setFillStyle(0x303840, 0.55);
     this.useButton.setStrokeStyle(3, 0x77838c, 0.5);
@@ -1109,13 +1156,29 @@ class GameScene extends Phaser.Scene {
       this.inventoryUI.closePanel();
       return;
     }
+    if (isOpen && this.craftingUI && this.craftingUI.isOpen) this.craftingUI.closePanel();
+    this.handleBlockingPanelChanged(isOpen);
+  }
+
+  handleCraftingOpenChanged(isOpen) {
+    if (isOpen && this.isDeathHandled) {
+      this.craftingUI.closePanel();
+      return;
+    }
+    if (isOpen && this.inventoryUI && this.inventoryUI.isOpen) this.inventoryUI.closePanel();
+    this.handleBlockingPanelChanged(isOpen);
+  }
+
+  handleBlockingPanelChanged(isOpen) {
     this.cancelInteractionHold();
     if (this.virtualJoystick) this.virtualJoystick.reset();
     this.resetActionButton();
     if (this.input.keyboard) this.input.keyboard.resetKeys();
     if (this.player && this.player.body) this.player.setVelocity(0, 0);
     this.resetUseButton();
-    if (!isOpen && !this.isDeathHandled) this.updateInteractionTarget();
+    if (!isOpen && !this.isDeathHandled && !this.isBlockingPanelOpen()) {
+      this.updateInteractionTarget();
+    }
   }
 
   updateInventoryHud() {
@@ -1166,7 +1229,7 @@ class GameScene extends Phaser.Scene {
       return;
     }
 
-    if (this.inventoryUI && this.inventoryUI.isOpen) {
+    if (this.isBlockingPanelOpen()) {
       this.player.setVelocity(0, 0);
       this.updateWorldDepth(this.player);
       return;

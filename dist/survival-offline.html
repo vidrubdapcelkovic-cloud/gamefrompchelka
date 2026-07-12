@@ -126,14 +126,54 @@ const FixedWorldObjects = Object.freeze([
 ]);
 
 const ItemCatalog = Object.freeze({
-  WOOD: Object.freeze({ id: 'WOOD', displayName: 'Дерево', maxStack: 99, consumable: false }),
-  STONE: Object.freeze({ id: 'STONE', displayName: 'Камень', maxStack: 99, consumable: false }),
+  WOOD: Object.freeze({
+    id: 'WOOD', displayName: 'Дерево', maxStack: 99, category: 'RESOURCE', consumable: false
+  }),
+  STONE: Object.freeze({
+    id: 'STONE', displayName: 'Камень', maxStack: 99, category: 'RESOURCE', consumable: false
+  }),
   BERRIES: Object.freeze({
     id: 'BERRIES',
     displayName: 'Ягоды',
     maxStack: 99,
+    category: 'FOOD',
     consumable: true,
     hungerRestore: 20
+  }),
+  STONE_AXE: Object.freeze({
+    id: 'STONE_AXE',
+    displayName: 'Каменный топор',
+    maxStack: 1,
+    category: 'TOOL',
+    consumable: false
+  }),
+  STONE_PICKAXE: Object.freeze({
+    id: 'STONE_PICKAXE',
+    displayName: 'Каменная кирка',
+    maxStack: 1,
+    category: 'TOOL',
+    consumable: false
+  })
+});
+
+const RecipeCatalog = Object.freeze({
+  STONE_AXE: Object.freeze({
+    id: 'STONE_AXE',
+    displayName: 'Каменный топор',
+    ingredients: Object.freeze([
+      Object.freeze({ itemType: 'WOOD', quantity: 3 }),
+      Object.freeze({ itemType: 'STONE', quantity: 2 })
+    ]),
+    result: Object.freeze({ itemType: 'STONE_AXE', quantity: 1 })
+  }),
+  STONE_PICKAXE: Object.freeze({
+    id: 'STONE_PICKAXE',
+    displayName: 'Каменная кирка',
+    ingredients: Object.freeze([
+      Object.freeze({ itemType: 'WOOD', quantity: 2 }),
+      Object.freeze({ itemType: 'STONE', quantity: 3 })
+    ]),
+    result: Object.freeze({ itemType: 'STONE_PICKAXE', quantity: 1 })
   })
 });
 
@@ -415,6 +455,66 @@ class InventoryModel {
     return { type: 'swap', movedQuantity: source.quantity };
   }
 
+  craftExchange(ingredients, result) {
+    if (!Array.isArray(ingredients) || ingredients.length === 0) {
+      throw new Error('Ингредиенты крафта должны быть непустым массивом.');
+    }
+    if (!result || !ItemCatalog[result.itemType]
+      || !Number.isInteger(result.quantity) || result.quantity <= 0) {
+      throw new Error('Некорректный результат крафта.');
+    }
+
+    const required = new Map();
+    ingredients.forEach((ingredient) => {
+      if (!ingredient || !ItemCatalog[ingredient.itemType]
+        || !Number.isInteger(ingredient.quantity) || ingredient.quantity <= 0) {
+        throw new Error('Некорректный ингредиент крафта.');
+      }
+      required.set(
+        ingredient.itemType,
+        (required.get(ingredient.itemType) || 0) + ingredient.quantity
+      );
+    });
+
+    for (const [itemType, quantity] of required) {
+      if (this.getTotal(itemType) < quantity) {
+        return { success: false, reason: 'missingIngredients' };
+      }
+    }
+
+    const workingSlots = this.slots.map((slot) => (slot === null ? null : { ...slot }));
+    required.forEach((quantity, itemType) => {
+      let remaining = quantity;
+      for (let index = 0; index < workingSlots.length && remaining > 0; index += 1) {
+        const slot = workingSlots[index];
+        if (slot === null || slot.itemType !== itemType) continue;
+        const removed = Math.min(slot.quantity, remaining);
+        slot.quantity -= removed;
+        remaining -= removed;
+        if (slot.quantity === 0) workingSlots[index] = null;
+      }
+    });
+
+    let remainingResult = result.quantity;
+    const resultDefinition = ItemCatalog[result.itemType];
+    workingSlots.forEach((slot) => {
+      if (remainingResult === 0 || slot === null || slot.itemType !== result.itemType) return;
+      const added = Math.min(resultDefinition.maxStack - slot.quantity, remainingResult);
+      slot.quantity += added;
+      remainingResult -= added;
+    });
+    for (let index = 0; index < workingSlots.length && remainingResult > 0; index += 1) {
+      if (workingSlots[index] !== null) continue;
+      const added = Math.min(resultDefinition.maxStack, remainingResult);
+      workingSlots[index] = { itemType: result.itemType, quantity: added };
+      remainingResult -= added;
+    }
+
+    if (remainingResult > 0) return { success: false, reason: 'noSpace' };
+    this.slots = workingSlots;
+    return { success: true };
+  }
+
   getTotal(itemType) {
     if (!ItemCatalog[itemType]) throw new Error(`Неизвестный тип предмета: ${itemType}.`);
     return this.slots.reduce(
@@ -425,6 +525,38 @@ class InventoryModel {
 
   clear() {
     this.slots.fill(null);
+  }
+}
+
+class CraftingModel {
+  constructor(inventoryModel) {
+    this.inventoryModel = inventoryModel;
+  }
+
+  canCraft(recipeId) {
+    const recipe = RecipeCatalog[recipeId];
+    if (!recipe) throw new Error(`Неизвестный рецепт: ${recipeId}.`);
+    const missingIngredients = recipe.ingredients.filter(
+      (ingredient) => this.inventoryModel.getTotal(ingredient.itemType) < ingredient.quantity
+    );
+    return {
+      recipeId,
+      canCraft: missingIngredients.length === 0,
+      reason: missingIngredients.length === 0 ? null : 'missingIngredients'
+    };
+  }
+
+  craft(recipeId) {
+    const recipe = RecipeCatalog[recipeId];
+    if (!recipe) throw new Error(`Неизвестный рецепт: ${recipeId}.`);
+    const exchange = this.inventoryModel.craftExchange(recipe.ingredients, recipe.result);
+    if (!exchange.success) return exchange;
+    return {
+      success: true,
+      recipeId,
+      resultItemType: recipe.result.itemType,
+      resultQuantity: recipe.result.quantity
+    };
   }
 }
 
@@ -971,6 +1103,233 @@ class InventoryUI {
   }
 }
 
+class CraftingUI {
+  constructor(scene, craftingModel, onOpenChanged, onCraftResult) {
+    this.scene = scene;
+    this.craftingModel = craftingModel;
+    this.onOpenChanged = onOpenChanged;
+    this.onCraftResult = onCraftResult;
+    this.recipeIds = Object.keys(RecipeCatalog);
+    this.selectedRecipeId = this.recipeIds[0];
+    this.isOpen = false;
+    this.destroyed = false;
+    this.togglePointerId = null;
+    this.toggleNativePointerId = null;
+    this.elements = [];
+    this.panelElements = [];
+    this.interactivePanelElements = [];
+    this.recipeRows = [];
+
+    this.createPanel();
+    this.createToggleButton();
+    this.registerHandlers();
+    this.setPanelVisible(false);
+  }
+
+  createPanel() {
+    this.panelBackground = this.scene.add.rectangle(480, 270, 440, 310, 0x0d141b, 0.96)
+      .setScrollFactor(0).setDepth(INTERFACE_DEPTH + 35)
+      .setStrokeStyle(3, 0xbad5e8, 0.75).setInteractive();
+    this.panelTitle = this.scene.add.text(480, 142, 'Крафт', {
+      fontFamily: 'Arial, sans-serif', fontSize: '26px', fontStyle: 'bold', color: '#ffffff'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 36);
+    this.elements.push(this.panelBackground, this.panelTitle);
+    this.panelElements.push(this.panelBackground, this.panelTitle);
+    this.interactivePanelElements.push(this.panelBackground);
+
+    this.onPanelPointerDown = (pointer, localX, localY, event) => {
+      if (event && event.stopPropagation) event.stopPropagation();
+    };
+    this.panelBackground.on('pointerdown', this.onPanelPointerDown);
+
+    this.recipeIds.forEach((recipeId, index) => {
+      const recipe = RecipeCatalog[recipeId];
+      const y = 205 + index * 76;
+      const background = this.scene.add.rectangle(480, y, 380, 62, 0x1b2731, 0.96)
+        .setScrollFactor(0).setDepth(INTERFACE_DEPTH + 37)
+        .setStrokeStyle(2, 0x78909f, 0.8).setInteractive();
+      const ingredientsText = recipe.ingredients
+        .map((ingredient) => `${ingredient.itemType} ×${ingredient.quantity}`)
+        .join('  ');
+      const text = this.scene.add.text(310, y - 20, `${recipe.displayName}\n${ingredientsText}`, {
+        fontFamily: 'Arial, sans-serif', fontSize: '17px', color: '#ffffff', lineSpacing: 5
+      }).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 38);
+      const resultText = this.scene.add.text(
+        650,
+        y,
+        `→ ${recipe.result.itemType} ×${recipe.result.quantity}`,
+        {
+        fontFamily: 'Arial, sans-serif', fontSize: '17px', color: '#fff4b0'
+        }
+      ).setOrigin(1, 0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 38);
+      const row = { recipeId, background, text, resultText };
+      row.onPointerDown = (pointer, localX, localY, event) => {
+        if (event && event.stopPropagation) event.stopPropagation();
+        this.selectRecipe(recipeId);
+      };
+      background.on('pointerdown', row.onPointerDown);
+      this.recipeRows.push(row);
+      this.elements.push(background, text, resultText);
+      this.panelElements.push(background, text, resultText);
+      this.interactivePanelElements.push(background);
+    });
+
+    this.createButton = this.scene.add.rectangle(480, 370, 180, 48, 0x3f8f5b, 0.95)
+      .setScrollFactor(0).setDepth(INTERFACE_DEPTH + 37)
+      .setStrokeStyle(2, 0xd9ffe3, 0.9).setInteractive();
+    this.createButtonText = this.scene.add.text(480, 370, 'Создать', {
+      fontFamily: 'Arial, sans-serif', fontSize: '20px', fontStyle: 'bold', color: '#ffffff'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 38);
+    this.onCreatePointerDown = (pointer, localX, localY, event) => {
+      if (event && event.stopPropagation) event.stopPropagation();
+      if (!this.isOpen) return;
+      const result = this.craftingModel.craft(this.selectedRecipeId);
+      this.onCraftResult(result, RecipeCatalog[this.selectedRecipeId]);
+    };
+    this.createButton.on('pointerdown', this.onCreatePointerDown);
+    this.elements.push(this.createButton, this.createButtonText);
+    this.panelElements.push(this.createButton, this.createButtonText);
+    this.interactivePanelElements.push(this.createButton);
+    this.updateSelection();
+  }
+
+  createToggleButton() {
+    this.toggleButton = this.scene.add.circle(0, 0, 28, 0x674d82, 0.9)
+      .setScrollFactor(0).setDepth(INTERFACE_DEPTH + 32)
+      .setStrokeStyle(2, 0xe0c9f5, 0.85).setInteractive();
+    this.toggleButtonText = this.scene.add.text(0, 0, 'CRAFT', {
+      fontFamily: 'Arial, sans-serif', fontSize: '10px', fontStyle: 'bold', color: '#ffffff'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 33);
+    this.toggleButton.setPosition(this.scene.scale.gameSize.width - 52, 122);
+    this.toggleButtonText.setPosition(this.scene.scale.gameSize.width - 52, 122);
+    this.elements.push(this.toggleButton, this.toggleButtonText);
+  }
+
+  registerHandlers() {
+    this.onCraftKey = (event) => {
+      if (!event || !event.repeat) this.togglePanel();
+    };
+    this.onEscapeKey = (event) => {
+      if (!event || !event.repeat) this.closePanel();
+    };
+    this.scene.input.keyboard.on('keydown-C', this.onCraftKey);
+    this.scene.input.keyboard.on('keydown-ESC', this.onEscapeKey);
+
+    this.onTogglePointerDown = (pointer, localX, localY, event) => {
+      if (event && event.stopPropagation) event.stopPropagation();
+      if (this.togglePointerId !== null) return;
+      this.togglePointerId = pointer.id;
+      this.toggleNativePointerId = pointer.event ? pointer.event.pointerId : null;
+      this.toggleButton.setScale(0.92);
+      this.toggleButtonText.setScale(0.92);
+      this.togglePanel();
+    };
+    this.onTogglePointerEnd = (pointer) => {
+      if (pointer.id === this.togglePointerId) this.resetPointer();
+    };
+    this.onWindowPointerEnd = (event) => {
+      if (event.pointerId === this.toggleNativePointerId) this.resetPointer();
+    };
+    this.onBlur = () => this.resetPointer();
+    this.onVisibilityChange = () => {
+      if (document.hidden) this.resetPointer();
+    };
+    this.onResize = () => {
+      this.resetPointer();
+      this.toggleButton.setPosition(this.scene.scale.gameSize.width - 52, 122);
+      this.toggleButtonText.setPosition(this.scene.scale.gameSize.width - 52, 122);
+    };
+
+    this.toggleButton.on('pointerdown', this.onTogglePointerDown);
+    this.scene.input.on('pointerup', this.onTogglePointerEnd);
+    this.scene.input.on('pointerupoutside', this.onTogglePointerEnd);
+    this.scene.scale.on('resize', this.onResize);
+    window.addEventListener('pointerup', this.onWindowPointerEnd);
+    window.addEventListener('pointercancel', this.onWindowPointerEnd);
+    window.addEventListener('blur', this.onBlur);
+    document.addEventListener('visibilitychange', this.onVisibilityChange);
+    this.scene.events.once(Phaser.Scenes.Events.SHUTDOWN, this.destroy, this);
+    this.scene.events.once(Phaser.Scenes.Events.DESTROY, this.destroy, this);
+  }
+
+  selectRecipe(recipeId) {
+    if (!RecipeCatalog[recipeId]) return false;
+    this.selectedRecipeId = recipeId;
+    this.updateSelection();
+    return true;
+  }
+
+  updateSelection() {
+    this.recipeRows.forEach((row) => {
+      const selected = row.recipeId === this.selectedRecipeId;
+      row.background.setStrokeStyle(selected ? 4 : 2, selected ? 0xffdf6b : 0x78909f, 1);
+    });
+  }
+
+  togglePanel() {
+    if (this.isOpen) this.closePanel();
+    else this.openPanel();
+  }
+
+  openPanel() {
+    if (this.isOpen) return;
+    this.isOpen = true;
+    this.setPanelVisible(true);
+    this.onOpenChanged(true);
+  }
+
+  closePanel() {
+    if (!this.isOpen) return;
+    this.isOpen = false;
+    this.setPanelVisible(false);
+    this.onOpenChanged(false);
+  }
+
+  setPanelVisible(visible) {
+    this.panelElements.forEach((element) => element.setVisible(visible));
+    this.interactivePanelElements.forEach((element) => {
+      if (visible) element.setInteractive();
+      else element.disableInteractive();
+    });
+  }
+
+  resetPointer() {
+    this.togglePointerId = null;
+    this.toggleNativePointerId = null;
+    if (this.toggleButton && this.toggleButton.active) this.toggleButton.setScale(1);
+    if (this.toggleButtonText && this.toggleButtonText.active) this.toggleButtonText.setScale(1);
+  }
+
+  destroy() {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.resetPointer();
+    this.selectedRecipeId = null;
+    this.scene.input.keyboard.off('keydown-C', this.onCraftKey);
+    this.scene.input.keyboard.off('keydown-ESC', this.onEscapeKey);
+    this.panelBackground.off('pointerdown', this.onPanelPointerDown);
+    this.recipeRows.forEach((row) => row.background.off('pointerdown', row.onPointerDown));
+    this.createButton.off('pointerdown', this.onCreatePointerDown);
+    this.toggleButton.off('pointerdown', this.onTogglePointerDown);
+    this.scene.input.off('pointerup', this.onTogglePointerEnd);
+    this.scene.input.off('pointerupoutside', this.onTogglePointerEnd);
+    this.scene.scale.off('resize', this.onResize);
+    window.removeEventListener('pointerup', this.onWindowPointerEnd);
+    window.removeEventListener('pointercancel', this.onWindowPointerEnd);
+    window.removeEventListener('blur', this.onBlur);
+    document.removeEventListener('visibilitychange', this.onVisibilityChange);
+    this.scene.events.off(Phaser.Scenes.Events.SHUTDOWN, this.destroy, this);
+    this.scene.events.off(Phaser.Scenes.Events.DESTROY, this.destroy, this);
+    this.elements.forEach((element) => {
+      if (element && element.active) element.destroy();
+    });
+    this.elements = [];
+    this.panelElements = [];
+    this.interactivePanelElements = [];
+    this.recipeRows = [];
+  }
+}
+
 class VirtualJoystick {
   constructor(scene) {
     this.scene = scene;
@@ -1140,6 +1499,7 @@ class GameScene extends Phaser.Scene {
 
   create() {
     this.inventoryModel = new InventoryModel();
+    this.craftingModel = new CraftingModel(this.inventoryModel);
     this.playerStatsModel = new PlayerStatsModel();
     this.isDeathHandled = false;
     this.createWorld();
@@ -1151,6 +1511,7 @@ class GameScene extends Phaser.Scene {
     this.createInteractionInterface();
     this.createVirtualJoystick();
     this.createInventoryUI();
+    this.createCraftingUI();
     this.createSurvivalInterface();
     this.registerLifecycleHandlers();
   }
@@ -1577,6 +1938,19 @@ class GameScene extends Phaser.Scene {
         graphics.fillCircle(10, 5, 5);
         graphics.fillStyle(0x3f7d46, 1);
         graphics.fillRect(9, 0, 3, 4);
+      }],
+      ['temporary-stone-axe', 0x8c613c, (graphics) => {
+        graphics.fillRect(9, 4, 3, 15);
+        graphics.fillStyle(0x9099a1, 1);
+        graphics.fillRect(5, 2, 11, 6);
+        graphics.fillRect(3, 4, 4, 4);
+      }],
+      ['temporary-stone-pickaxe', 0x8c613c, (graphics) => {
+        graphics.fillRect(9, 5, 3, 14);
+        graphics.fillStyle(0x9099a1, 1);
+        graphics.fillRect(3, 2, 14, 4);
+        graphics.fillRect(2, 4, 4, 3);
+        graphics.fillRect(15, 4, 3, 3);
       }]
     ];
 
@@ -1736,7 +2110,7 @@ class GameScene extends Phaser.Scene {
 
     this.onActionPointerDown = (pointer) => {
       if (this.isDeathHandled) return;
-      if (this.inventoryUI && this.inventoryUI.isOpen) return;
+      if (this.isBlockingPanelOpen()) return;
       if (this.actionPointerId !== null || this.interactionSystem.getCurrentTarget() === null) return;
 
       this.actionPointerId = pointer.id;
@@ -1805,6 +2179,7 @@ class GameScene extends Phaser.Scene {
 
   startInteractionHold(source) {
     if (this.isDeathHandled) return false;
+    if (this.isBlockingPanelOpen()) return false;
     const target = this.interactionSystem.getCurrentTarget();
     if (target === null || this.holdInputSource !== null) return false;
 
@@ -2068,10 +2443,40 @@ class GameScene extends Phaser.Scene {
       {
         WOOD: 'temporary-ground-wood',
         STONE: 'temporary-ground-stone',
-        BERRIES: 'temporary-ground-berries'
+        BERRIES: 'temporary-ground-berries',
+        STONE_AXE: 'temporary-stone-axe',
+        STONE_PICKAXE: 'temporary-stone-pickaxe'
       },
       (isOpen) => this.handleInventoryOpenChanged(isOpen)
     );
+  }
+
+  createCraftingUI() {
+    this.craftingUI = new CraftingUI(
+      this,
+      this.craftingModel,
+      (isOpen) => this.handleCraftingOpenChanged(isOpen),
+      (result, recipe) => this.handleCraftResult(result, recipe)
+    );
+  }
+
+  isBlockingPanelOpen() {
+    return Boolean(
+      (this.inventoryUI && this.inventoryUI.isOpen)
+      || (this.craftingUI && this.craftingUI.isOpen)
+    );
+  }
+
+  handleCraftResult(result, recipe) {
+    if (result.success) {
+      this.inventoryUI.updateFromModel();
+      this.updateInventoryHud();
+      this.showInteractionMessage(`Создано: ${recipe.displayName}`);
+    } else if (result.reason === 'missingIngredients') {
+      this.showInteractionMessage('Недостаточно ресурсов');
+    } else if (result.reason === 'noSpace') {
+      this.showInteractionMessage('Нет места в инвентаре');
+    }
   }
 
   createSurvivalInterface() {
@@ -2103,7 +2508,7 @@ class GameScene extends Phaser.Scene {
 
     this.onUsePointerDown = (pointer, localX, localY, event) => {
       if (event && event.stopPropagation) event.stopPropagation();
-      if (this.usePointerId !== null || this.isDeathHandled || this.inventoryUI.isOpen) return;
+      if (this.usePointerId !== null || this.isDeathHandled || this.isBlockingPanelOpen()) return;
       this.usePointerId = pointer.id;
       this.useNativePointerId = pointer.event ? pointer.event.pointerId : null;
       this.useButton.setScale(0.92);
@@ -2153,7 +2558,7 @@ class GameScene extends Phaser.Scene {
   }
 
   tryUseActiveItem() {
-    if (this.isDeathHandled || this.inventoryUI.isOpen) return false;
+    if (this.isDeathHandled || this.isBlockingPanelOpen()) return false;
     const slotIndex = this.inventoryUI.getActiveHotbarIndex();
     const slot = this.inventoryModel.getSlot(slotIndex);
     if (slot === null) {
@@ -2193,6 +2598,7 @@ class GameScene extends Phaser.Scene {
     this.resetActionButton();
     this.resetUseButton();
     if (this.inventoryUI && this.inventoryUI.isOpen) this.inventoryUI.closePanel();
+    if (this.craftingUI && this.craftingUI.isOpen) this.craftingUI.closePanel();
     this.targetMarker.setVisible(false);
     this.useButton.setFillStyle(0x303840, 0.55);
     this.useButton.setStrokeStyle(3, 0x77838c, 0.5);
@@ -2232,13 +2638,29 @@ class GameScene extends Phaser.Scene {
       this.inventoryUI.closePanel();
       return;
     }
+    if (isOpen && this.craftingUI && this.craftingUI.isOpen) this.craftingUI.closePanel();
+    this.handleBlockingPanelChanged(isOpen);
+  }
+
+  handleCraftingOpenChanged(isOpen) {
+    if (isOpen && this.isDeathHandled) {
+      this.craftingUI.closePanel();
+      return;
+    }
+    if (isOpen && this.inventoryUI && this.inventoryUI.isOpen) this.inventoryUI.closePanel();
+    this.handleBlockingPanelChanged(isOpen);
+  }
+
+  handleBlockingPanelChanged(isOpen) {
     this.cancelInteractionHold();
     if (this.virtualJoystick) this.virtualJoystick.reset();
     this.resetActionButton();
     if (this.input.keyboard) this.input.keyboard.resetKeys();
     if (this.player && this.player.body) this.player.setVelocity(0, 0);
     this.resetUseButton();
-    if (!isOpen && !this.isDeathHandled) this.updateInteractionTarget();
+    if (!isOpen && !this.isDeathHandled && !this.isBlockingPanelOpen()) {
+      this.updateInteractionTarget();
+    }
   }
 
   updateInventoryHud() {
@@ -2289,7 +2711,7 @@ class GameScene extends Phaser.Scene {
       return;
     }
 
-    if (this.inventoryUI && this.inventoryUI.isOpen) {
+    if (this.isBlockingPanelOpen()) {
       this.player.setVelocity(0, 0);
       this.updateWorldDepth(this.player);
       return;

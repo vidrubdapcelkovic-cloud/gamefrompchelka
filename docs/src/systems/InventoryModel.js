@@ -96,6 +96,66 @@ class InventoryModel {
     return { type: 'swap', movedQuantity: source.quantity };
   }
 
+  craftExchange(ingredients, result) {
+    if (!Array.isArray(ingredients) || ingredients.length === 0) {
+      throw new Error('Ингредиенты крафта должны быть непустым массивом.');
+    }
+    if (!result || !ItemCatalog[result.itemType]
+      || !Number.isInteger(result.quantity) || result.quantity <= 0) {
+      throw new Error('Некорректный результат крафта.');
+    }
+
+    const required = new Map();
+    ingredients.forEach((ingredient) => {
+      if (!ingredient || !ItemCatalog[ingredient.itemType]
+        || !Number.isInteger(ingredient.quantity) || ingredient.quantity <= 0) {
+        throw new Error('Некорректный ингредиент крафта.');
+      }
+      required.set(
+        ingredient.itemType,
+        (required.get(ingredient.itemType) || 0) + ingredient.quantity
+      );
+    });
+
+    for (const [itemType, quantity] of required) {
+      if (this.getTotal(itemType) < quantity) {
+        return { success: false, reason: 'missingIngredients' };
+      }
+    }
+
+    const workingSlots = this.slots.map((slot) => (slot === null ? null : { ...slot }));
+    required.forEach((quantity, itemType) => {
+      let remaining = quantity;
+      for (let index = 0; index < workingSlots.length && remaining > 0; index += 1) {
+        const slot = workingSlots[index];
+        if (slot === null || slot.itemType !== itemType) continue;
+        const removed = Math.min(slot.quantity, remaining);
+        slot.quantity -= removed;
+        remaining -= removed;
+        if (slot.quantity === 0) workingSlots[index] = null;
+      }
+    });
+
+    let remainingResult = result.quantity;
+    const resultDefinition = ItemCatalog[result.itemType];
+    workingSlots.forEach((slot) => {
+      if (remainingResult === 0 || slot === null || slot.itemType !== result.itemType) return;
+      const added = Math.min(resultDefinition.maxStack - slot.quantity, remainingResult);
+      slot.quantity += added;
+      remainingResult -= added;
+    });
+    for (let index = 0; index < workingSlots.length && remainingResult > 0; index += 1) {
+      if (workingSlots[index] !== null) continue;
+      const added = Math.min(resultDefinition.maxStack, remainingResult);
+      workingSlots[index] = { itemType: result.itemType, quantity: added };
+      remainingResult -= added;
+    }
+
+    if (remainingResult > 0) return { success: false, reason: 'noSpace' };
+    this.slots = workingSlots;
+    return { success: true };
+  }
+
   getTotal(itemType) {
     if (!ItemCatalog[itemType]) throw new Error(`Неизвестный тип предмета: ${itemType}.`);
     return this.slots.reduce(

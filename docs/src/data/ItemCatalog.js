@@ -1,11 +1,30 @@
 const ItemCatalog = Object.freeze({
-  WOOD: Object.freeze({ id: 'WOOD', displayName: 'Дерево', maxStack: 99, consumable: false }),
-  STONE: Object.freeze({ id: 'STONE', displayName: 'Камень', maxStack: 99, consumable: false }),
+  WOOD: Object.freeze({
+    id: 'WOOD', displayName: 'Дерево', maxStack: 99, category: 'RESOURCE', consumable: false
+  }),
+  STONE: Object.freeze({
+    id: 'STONE', displayName: 'Камень', maxStack: 99, category: 'RESOURCE', consumable: false
+  }),
   BERRIES: Object.freeze({
     id: 'BERRIES',
     displayName: 'Ягоды',
     maxStack: 99,
+    category: 'FOOD',
     consumable: true,
     hungerRestore: 20
+  }),
+  STONE_AXE: Object.freeze({
+    id: 'STONE_AXE',
+    displayName: 'Каменный топор',
+    maxStack: 1,
+    category: 'TOOL',
+    consumable: false
+  }),
+  STONE_PICKAXE: Object.freeze({
+    id: 'STONE_PICKAXE',
+    displayName: 'Каменная кирка',
+    maxStack: 1,
+    category: 'TOOL',
+    consumable: false
   })
 });
