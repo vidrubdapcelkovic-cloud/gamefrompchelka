@@ -9,6 +9,11 @@ const WORLD_OBJECT_DROPS = Object.freeze({
 const WORLD_DEPTH_SCALE = 0.1;
 const INTERFACE_DEPTH = 2000;
 const GROUND_ITEM_PICKUP_RADIUS = 28;
+const PLAYER_MELEE_ATTACK = Object.freeze({ damage: 10, radius: 52, cooldownMs: 450 });
+const SLIME_SPAWN_CELLS = Object.freeze([
+  Object.freeze({ col: 8, row: 8 }), Object.freeze({ col: 39, row: 8 }),
+  Object.freeze({ col: 8, row: 28 }), Object.freeze({ col: 39, row: 28 })
+]);
 
 class GameScene extends Phaser.Scene {
   constructor() {
@@ -24,6 +29,7 @@ class GameScene extends Phaser.Scene {
     this.createPlayer();
     this.createWorldObjects();
     this.createBuildingSystem();
+    this.createCreatureSystem();
     this.createControls();
     this.createCamera();
     this.createInterface();
@@ -33,6 +39,7 @@ class GameScene extends Phaser.Scene {
     this.createCraftingUI();
     this.createSurvivalInterface();
     this.createBuildingInterface();
+    this.createCombatInterface();
     this.registerLifecycleHandlers();
   }
 
@@ -400,6 +407,28 @@ class GameScene extends Phaser.Scene {
     );
   }
 
+  createCreatureSystem() {
+    this.creatureSystem = new CreatureSystem(
+      this,
+      (damage) => this.playerStatsModel.takeDamage(damage)
+    );
+    SLIME_SPAWN_CELLS.forEach(({ col, row }) => {
+      if (!this.worldGrid.isWalkable(col, row)
+        || Array.from(this.runtimeWorldObjects.values()).some(
+          (object) => object.active && object.col === col && object.row === row
+        )) {
+        throw new Error(`Недопустимая клетка появления слизня (${col}, ${row}).`);
+      }
+      const position = this.worldGrid.cellToWorldCenter(col, row);
+      this.creatureSystem.spawn('SLIME', position.x, position.y);
+    });
+    this.creatureMapCollider = this.physics.add.collider(this.creatureSystem.group, this.surfaceLayer);
+    this.creatureObstacleCollider = this.physics.add.collider(
+      this.creatureSystem.group,
+      this.blockingWorldObjects
+    );
+  }
+
   createWorldObjectTextures() {
     if (!this.textures.exists('temporary-tree')) {
       const tree = this.make.graphics({ x: 0, y: 0, add: false });
@@ -462,6 +491,20 @@ class GameScene extends Phaser.Scene {
       wall.fillRect(22, 2, 3, 28);
       wall.generateTexture('temporary-wood-wall', 32, 32);
       wall.destroy();
+    }
+
+    if (!this.textures.exists('temporary-slime')) {
+      const slime = this.make.graphics({ x: 0, y: 0, add: false });
+      slime.fillStyle(0x64b85d, 1);
+      slime.fillRoundedRect(1, 7, 30, 23, 9);
+      slime.fillStyle(0x91df79, 1);
+      slime.fillCircle(11, 15, 4);
+      slime.fillCircle(21, 15, 4);
+      slime.fillStyle(0x17212b, 1);
+      slime.fillCircle(11, 15, 2);
+      slime.fillCircle(21, 15, 2);
+      slime.generateTexture('temporary-slime', 32, 32);
+      slime.destroy();
     }
   }
 
@@ -592,6 +635,7 @@ class GameScene extends Phaser.Scene {
     this.buildToggleKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.B);
     this.placeBuildKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER);
     this.cancelBuildKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
+    this.attackKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
   }
 
   createVirtualJoystick() {
@@ -1129,6 +1173,103 @@ class GameScene extends Phaser.Scene {
     this.positionUseButton();
   }
 
+  createCombatInterface() {
+    this.combatCleanupDone = false;
+    this.lastPlayerAttackTime = -Infinity;
+    this.attackPointerId = null;
+    this.attackNativePointerId = null;
+    this.attackButton = this.add.circle(0, 0, 30, 0x8b3f47, 0.9)
+      .setStrokeStyle(3, 0xffc4c8, 0.9).setScrollFactor(0)
+      .setDepth(INTERFACE_DEPTH + 12).setInteractive();
+    this.attackButtonLabel = this.add.text(0, 0, 'ATTACK', {
+      fontFamily: 'Arial, sans-serif', fontSize: '9px', fontStyle: 'bold', color: '#ffffff'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 13);
+    this.attackButton.setPosition(this.scale.gameSize.width - 328, this.scale.gameSize.height - 92);
+    this.attackButtonLabel.setPosition(this.scale.gameSize.width - 328, this.scale.gameSize.height - 92);
+    this.onAttackPointerDown = (pointer, localX, localY, event) => {
+      if (event && event.stopPropagation) event.stopPropagation();
+      if (this.attackPointerId !== null) return;
+      this.attackPointerId = pointer.id;
+      this.attackNativePointerId = pointer.event ? pointer.event.pointerId : null;
+      this.attackButton.setScale(0.92);
+      this.attackButtonLabel.setScale(0.92);
+      this.tryPlayerAttack(this.time.now);
+    };
+    this.onAttackPointerEnd = (pointer) => {
+      if (pointer.id === this.attackPointerId) this.resetAttackButton();
+    };
+    this.onAttackWindowEnd = (event) => {
+      if (event.pointerId === this.attackNativePointerId) this.resetAttackButton();
+    };
+    this.onAttackBlur = () => this.resetAttackButton();
+    this.onAttackVisibility = () => { if (document.hidden) this.resetAttackButton(); };
+    this.onAttackResize = () => {
+      this.resetAttackButton();
+      this.attackButton.setPosition(this.scale.gameSize.width - 328, this.scale.gameSize.height - 92);
+      this.attackButtonLabel.setPosition(this.scale.gameSize.width - 328, this.scale.gameSize.height - 92);
+    };
+    this.attackButton.on('pointerdown', this.onAttackPointerDown);
+    this.input.on('pointerup', this.onAttackPointerEnd);
+    this.input.on('pointerupoutside', this.onAttackPointerEnd);
+    this.scale.on('resize', this.onAttackResize);
+    window.addEventListener('pointerup', this.onAttackWindowEnd);
+    window.addEventListener('pointercancel', this.onAttackWindowEnd);
+    window.addEventListener('blur', this.onAttackBlur);
+    document.addEventListener('visibilitychange', this.onAttackVisibility);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.cleanupCombatInterface, this);
+    this.events.once(Phaser.Scenes.Events.DESTROY, this.cleanupCombatInterface, this);
+  }
+
+  resetAttackButton() {
+    this.attackPointerId = null;
+    this.attackNativePointerId = null;
+    if (this.attackButton && this.attackButton.active) this.attackButton.setScale(1);
+    if (this.attackButtonLabel && this.attackButtonLabel.active) this.attackButtonLabel.setScale(1);
+  }
+
+  tryPlayerAttack(time) {
+    if (this.isDeathHandled || this.isBlockingPanelOpen() || this.buildingSystem.isActive()
+      || this.holdActionSystem.active || time - this.lastPlayerAttackTime < PLAYER_MELEE_ATTACK.cooldownMs) {
+      return false;
+    }
+    this.lastPlayerAttackTime = time;
+    const target = this.creatureSystem.getNearestAttackable(
+      this.player.x, this.player.y, PLAYER_MELEE_ATTACK.radius
+    );
+    if (!target) return true;
+    const damage = this.creatureSystem.damage(target.id, PLAYER_MELEE_ATTACK.damage);
+    if (damage > 0) {
+      this.showInteractionMessage(`Удар: ${CreatureCatalog[target.type].displayName} -${damage}`);
+    }
+    return true;
+  }
+
+  cleanupCombatInterface() {
+    if (this.combatCleanupDone) return;
+    this.combatCleanupDone = true;
+    this.resetAttackButton();
+    this.attackButton.off('pointerdown', this.onAttackPointerDown);
+    this.input.off('pointerup', this.onAttackPointerEnd);
+    this.input.off('pointerupoutside', this.onAttackPointerEnd);
+    this.scale.off('resize', this.onAttackResize);
+    window.removeEventListener('pointerup', this.onAttackWindowEnd);
+    window.removeEventListener('pointercancel', this.onAttackWindowEnd);
+    window.removeEventListener('blur', this.onAttackBlur);
+    document.removeEventListener('visibilitychange', this.onAttackVisibility);
+    this.events.off(Phaser.Scenes.Events.SHUTDOWN, this.cleanupCombatInterface, this);
+    this.events.off(Phaser.Scenes.Events.DESTROY, this.cleanupCombatInterface, this);
+    if (this.creatureMapCollider) this.creatureMapCollider.destroy();
+    if (this.creatureObstacleCollider) this.creatureObstacleCollider.destroy();
+    if (this.creatureSystem) this.creatureSystem.clear();
+    this.creatureMapCollider = null;
+    this.creatureObstacleCollider = null;
+    this.creatureSystem = null;
+    if (this.attackButton && this.attackButton.active) this.attackButton.destroy();
+    if (this.attackButtonLabel && this.attackButtonLabel.active) this.attackButtonLabel.destroy();
+    this.attackButton = null;
+    this.attackButtonLabel = null;
+  }
+
   createBuildingInterface() {
     this.buildingCleanupDone = false;
     this.buildTogglePointerId = null;
@@ -1237,6 +1378,8 @@ class GameScene extends Phaser.Scene {
     this.cancelInteractionHold();
     this.resetActionButton();
     this.resetUseButton();
+    this.resetAttackButton();
+    this.resetAttackButton();
     this.targetMarker.setVisible(false);
     this.buildingSystem.enterMode('WOOD_WALL');
     this.placeButton.setVisible(true);
@@ -1485,6 +1628,7 @@ class GameScene extends Phaser.Scene {
     if (this.input.keyboard) this.input.keyboard.resetKeys();
     if (this.player && this.player.body) this.player.setVelocity(0, 0);
     this.resetUseButton();
+    this.resetAttackButton();
     if (!isOpen && !this.isDeathHandled && !this.isBlockingPanelOpen()) {
       this.updateInteractionTarget();
     }
@@ -1528,6 +1672,16 @@ class GameScene extends Phaser.Scene {
     if (this.survivalCleanupDone || !this.playerStatsModel) return;
     const statsDelta = Math.min(Math.max(Number.isFinite(delta) ? delta : 0, 0), 250);
     this.playerStatsModel.update(statsDelta);
+    this.statusHUD.update(
+      this.playerStatsModel.getHealth(),
+      this.playerStatsModel.getHunger()
+    );
+    this.creatureSystem.update(
+      time,
+      statsDelta,
+      this.player,
+      this.playerStatsModel.isDead()
+    );
     this.statusHUD.update(
       this.playerStatsModel.getHealth(),
       this.playerStatsModel.getHunger()
@@ -1583,6 +1737,8 @@ class GameScene extends Phaser.Scene {
       return;
     }
     this.updateInteractionTarget();
+
+    if (Phaser.Input.Keyboard.JustDown(this.attackKey)) this.tryPlayerAttack(time);
 
     if (Phaser.Input.Keyboard.JustDown(this.useKey)) {
       this.tryUseActiveItem();

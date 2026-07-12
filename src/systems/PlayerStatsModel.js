@@ -37,6 +37,15 @@ class PlayerStatsModel {
     return this.hunger;
   }
 
+  takeDamage(amount) {
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new Error(`Урон должен быть конечным положительным числом: ${amount}.`);
+    }
+    const actualDamage = Math.min(amount, this.health);
+    this.health -= actualDamage;
+    return actualDamage;
+  }
+
   restoreHunger(amount) {
     if (!Number.isFinite(amount) || amount < 0) {
       throw new Error(`Восстановление голода должно быть конечным неотрицательным числом: ${amount}.`);
