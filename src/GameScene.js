@@ -23,6 +23,7 @@ class GameScene extends Phaser.Scene {
     this.createWorld();
     this.createPlayer();
     this.createWorldObjects();
+    this.createBuildingSystem();
     this.createControls();
     this.createCamera();
     this.createInterface();
@@ -31,6 +32,7 @@ class GameScene extends Phaser.Scene {
     this.createInventoryUI();
     this.createCraftingUI();
     this.createSurvivalInterface();
+    this.createBuildingInterface();
     this.registerLifecycleHandlers();
   }
 
@@ -387,6 +389,17 @@ class GameScene extends Phaser.Scene {
     });
   }
 
+  createBuildingSystem() {
+    this.lastFacingDirection = 'down';
+    this.currentBuildTarget = null;
+    this.buildingSystem = new BuildingSystem(
+      this,
+      this.worldGrid,
+      this.blockingWorldObjects,
+      { WOOD_WALL: 'temporary-wood-wall' }
+    );
+  }
+
   createWorldObjectTextures() {
     if (!this.textures.exists('temporary-tree')) {
       const tree = this.make.graphics({ x: 0, y: 0, add: false });
@@ -435,6 +448,20 @@ class GameScene extends Phaser.Scene {
       bush.fillCircle(17, 22, 3);
       bush.generateTexture('temporary-berry-bush', 32, 32);
       bush.destroy();
+    }
+
+    if (!this.textures.exists('temporary-wood-wall')) {
+      const wall = this.make.graphics({ x: 0, y: 0, add: false });
+      wall.fillStyle(0x744a2b, 1);
+      wall.fillRect(1, 2, 30, 28);
+      wall.fillStyle(0xa87343, 1);
+      wall.fillRect(3, 5, 26, 6);
+      wall.fillRect(3, 16, 26, 6);
+      wall.fillStyle(0x4f321f, 1);
+      wall.fillRect(7, 2, 3, 28);
+      wall.fillRect(22, 2, 3, 28);
+      wall.generateTexture('temporary-wood-wall', 32, 32);
+      wall.destroy();
     }
   }
 
@@ -562,6 +589,9 @@ class GameScene extends Phaser.Scene {
     });
     this.interactKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
     this.useKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F);
+    this.buildToggleKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.B);
+    this.placeBuildKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER);
+    this.cancelBuildKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
   }
 
   createVirtualJoystick() {
@@ -630,6 +660,7 @@ class GameScene extends Phaser.Scene {
 
     this.onActionPointerDown = (pointer) => {
       if (this.isDeathHandled) return;
+      if (this.buildingSystem && this.buildingSystem.isActive()) return;
       if (this.isBlockingPanelOpen()) return;
       if (this.actionPointerId !== null || this.interactionSystem.getCurrentTarget() === null) return;
 
@@ -699,6 +730,7 @@ class GameScene extends Phaser.Scene {
 
   startInteractionHold(source) {
     if (this.isDeathHandled) return false;
+    if (this.buildingSystem && this.buildingSystem.isActive()) return false;
     if (this.isBlockingPanelOpen()) return false;
     const target = this.interactionSystem.getCurrentTarget();
     if (target === null || this.holdInputSource !== null) return false;
@@ -1061,7 +1093,8 @@ class GameScene extends Phaser.Scene {
 
     this.onUsePointerDown = (pointer, localX, localY, event) => {
       if (event && event.stopPropagation) event.stopPropagation();
-      if (this.usePointerId !== null || this.isDeathHandled || this.isBlockingPanelOpen()) return;
+      if (this.usePointerId !== null || this.isDeathHandled || this.isBlockingPanelOpen()
+        || this.buildingSystem.isActive()) return;
       this.usePointerId = pointer.id;
       this.useNativePointerId = pointer.event ? pointer.event.pointerId : null;
       this.useButton.setScale(0.92);
@@ -1096,6 +1129,242 @@ class GameScene extends Phaser.Scene {
     this.positionUseButton();
   }
 
+  createBuildingInterface() {
+    this.buildingCleanupDone = false;
+    this.buildTogglePointerId = null;
+    this.buildToggleNativePointerId = null;
+    this.placePointerId = null;
+    this.placeNativePointerId = null;
+
+    this.buildToggleButton = this.add.circle(0, 0, 28, 0x806039, 0.9)
+      .setStrokeStyle(2, 0xf1d2a5, 0.85).setScrollFactor(0)
+      .setDepth(INTERFACE_DEPTH + 12).setInteractive();
+    this.buildToggleLabel = this.add.text(0, 0, 'BUILD', {
+      fontFamily: 'Arial, sans-serif', fontSize: '10px', fontStyle: 'bold', color: '#ffffff'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 13);
+    this.placeButton = this.add.circle(0, 0, 30, 0x3f8f5b, 0.9)
+      .setStrokeStyle(3, 0xd9ffe3, 0.9).setScrollFactor(0)
+      .setDepth(INTERFACE_DEPTH + 12).setInteractive().setVisible(false);
+    this.placeButton.disableInteractive();
+    this.placeButtonLabel = this.add.text(0, 0, 'PLACE', {
+      fontFamily: 'Arial, sans-serif', fontSize: '10px', fontStyle: 'bold', color: '#ffffff'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 13).setVisible(false);
+
+    this.onBuildTogglePointerDown = (pointer, localX, localY, event) => {
+      if (event && event.stopPropagation) event.stopPropagation();
+      if (this.buildTogglePointerId !== null || this.isDeathHandled) return;
+      this.buildTogglePointerId = pointer.id;
+      this.buildToggleNativePointerId = pointer.event ? pointer.event.pointerId : null;
+      this.buildToggleButton.setScale(0.92);
+      this.buildToggleLabel.setScale(0.92);
+      this.toggleBuildMode();
+    };
+    this.onPlacePointerDown = (pointer, localX, localY, event) => {
+      if (event && event.stopPropagation) event.stopPropagation();
+      if (this.placePointerId !== null || this.isDeathHandled || !this.buildingSystem.isActive()) return;
+      this.placePointerId = pointer.id;
+      this.placeNativePointerId = pointer.event ? pointer.event.pointerId : null;
+      this.placeButton.setScale(0.92);
+      this.placeButtonLabel.setScale(0.92);
+      this.tryPlaceBuilding();
+    };
+    this.onBuildingPointerEnd = (pointer) => {
+      if (pointer.id === this.buildTogglePointerId) this.resetBuildTogglePointer();
+      if (pointer.id === this.placePointerId) this.resetPlacePointer();
+    };
+    this.onBuildingWindowPointerEnd = (event) => {
+      if (event.pointerId === this.buildToggleNativePointerId) this.resetBuildTogglePointer();
+      if (event.pointerId === this.placeNativePointerId) this.resetPlacePointer();
+    };
+    this.onBuildingBlur = () => {
+      this.resetBuildTogglePointer();
+      this.resetPlacePointer();
+    };
+    this.onBuildingVisibilityChange = () => {
+      if (document.hidden) this.onBuildingBlur();
+    };
+    this.onBuildingResize = () => {
+      this.onBuildingBlur();
+      this.positionBuildingButtons();
+    };
+
+    this.buildToggleButton.on('pointerdown', this.onBuildTogglePointerDown);
+    this.placeButton.on('pointerdown', this.onPlacePointerDown);
+    this.input.on('pointerup', this.onBuildingPointerEnd);
+    this.input.on('pointerupoutside', this.onBuildingPointerEnd);
+    this.scale.on('resize', this.onBuildingResize);
+    window.addEventListener('pointerup', this.onBuildingWindowPointerEnd);
+    window.addEventListener('pointercancel', this.onBuildingWindowPointerEnd);
+    window.addEventListener('blur', this.onBuildingBlur);
+    document.addEventListener('visibilitychange', this.onBuildingVisibilityChange);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.cleanupBuildingInterface, this);
+    this.events.once(Phaser.Scenes.Events.DESTROY, this.cleanupBuildingInterface, this);
+    this.positionBuildingButtons();
+  }
+
+  positionBuildingButtons() {
+    const width = this.scale.gameSize.width;
+    const height = this.scale.gameSize.height;
+    this.buildToggleButton.setPosition(width - 52, 192);
+    this.buildToggleLabel.setPosition(width - 52, 192);
+    this.placeButton.setPosition(width - 260, height - 92);
+    this.placeButtonLabel.setPosition(width - 260, height - 92);
+  }
+
+  resetBuildTogglePointer() {
+    this.buildTogglePointerId = null;
+    this.buildToggleNativePointerId = null;
+    if (this.buildToggleButton && this.buildToggleButton.active) this.buildToggleButton.setScale(1);
+    if (this.buildToggleLabel && this.buildToggleLabel.active) this.buildToggleLabel.setScale(1);
+  }
+
+  resetPlacePointer() {
+    this.placePointerId = null;
+    this.placeNativePointerId = null;
+    if (this.placeButton && this.placeButton.active) this.placeButton.setScale(1);
+    if (this.placeButtonLabel && this.placeButtonLabel.active) this.placeButtonLabel.setScale(1);
+  }
+
+  toggleBuildMode() {
+    if (this.buildingSystem.isActive()) this.exitBuildMode();
+    else this.enterBuildMode();
+  }
+
+  enterBuildMode() {
+    if (this.isDeathHandled) return false;
+    if (this.inventoryUI.isOpen) this.inventoryUI.closePanel();
+    if (this.craftingUI.isOpen) this.craftingUI.closePanel();
+    this.cancelInteractionHold();
+    this.resetActionButton();
+    this.resetUseButton();
+    this.targetMarker.setVisible(false);
+    this.buildingSystem.enterMode('WOOD_WALL');
+    this.placeButton.setVisible(true);
+    this.placeButton.setInteractive();
+    this.placeButtonLabel.setVisible(true);
+    this.updateBuildingPreview();
+    return true;
+  }
+
+  exitBuildMode() {
+    if (!this.buildingSystem || !this.buildingSystem.isActive()) return;
+    this.buildingSystem.exitMode();
+    this.currentBuildTarget = null;
+    this.placeButton.setVisible(false);
+    this.placeButton.disableInteractive();
+    this.placeButtonLabel.setVisible(false);
+    this.resetPlacePointer();
+    if (!this.isDeathHandled && !this.isBlockingPanelOpen()) this.updateInteractionTarget();
+  }
+
+  getBuildTargetCell() {
+    const playerCell = this.worldGrid.worldToCell(this.player.x, this.player.y);
+    if (playerCell === null) return null;
+    const offsets = {
+      up: { col: 0, row: -1 },
+      down: { col: 0, row: 1 },
+      left: { col: -1, row: 0 },
+      right: { col: 1, row: 0 }
+    };
+    const offset = offsets[this.lastFacingDirection];
+    return {
+      col: playerCell.col + offset.col,
+      row: playerCell.row + offset.row,
+      playerCol: playerCell.col,
+      playerRow: playerCell.row
+    };
+  }
+
+  validateBuildCell(target) {
+    const definition = BuildCatalog.WOOD_WALL;
+    if (!target || !this.worldGrid.isInside(target.col, target.row)
+      || !this.worldGrid.isWalkable(target.col, target.row)
+      || this.worldGrid.getTileType(target.col, target.row) === 'W'
+      || (target.col === target.playerCol && target.row === target.playerRow)) {
+      return { valid: false, reason: 'invalidCell' };
+    }
+    const occupiedByWorldObject = Array.from(this.runtimeWorldObjects.values()).some(
+      (object) => object.active && object.col === target.col && object.row === target.row
+    );
+    if (occupiedByWorldObject || this.buildingSystem.isOccupied(target.col, target.row)) {
+      return { valid: false, reason: 'invalidCell' };
+    }
+    const occupiedByGroundItem = this.groundItemSystem.getItems().some((item) => {
+      const cell = this.worldGrid.worldToCell(item.x, item.y);
+      return cell !== null && cell.col === target.col && cell.row === target.row;
+    });
+    if (occupiedByGroundItem) return { valid: false, reason: 'invalidCell' };
+    const hasCost = definition.cost.every(
+      (cost) => this.inventoryModel.getTotal(cost.itemType) >= cost.quantity
+    );
+    return hasCost
+      ? { valid: true, reason: null }
+      : { valid: false, reason: 'missingResources' };
+  }
+
+  updateBuildingPreview() {
+    if (!this.buildingSystem.isActive()) return;
+    const target = this.getBuildTargetCell();
+    const validation = this.validateBuildCell(target);
+    this.currentBuildTarget = target;
+    this.buildingSystem.updatePreview(target ? target.col : null, target ? target.row : null, validation.valid);
+  }
+
+  tryPlaceBuilding() {
+    if (this.isDeathHandled || !this.buildingSystem.isActive()) return false;
+    const target = this.getBuildTargetCell();
+    const validation = this.validateBuildCell(target);
+    if (!validation.valid) {
+      this.showInteractionMessage(
+        validation.reason === 'missingResources' ? 'Недостаточно дерева' : 'Здесь нельзя строить'
+      );
+      return false;
+    }
+    const cost = BuildCatalog.WOOD_WALL.cost[0];
+    if (!this.inventoryModel.consumeItem(cost.itemType, cost.quantity)) {
+      this.showInteractionMessage('Недостаточно дерева');
+      return false;
+    }
+    const placement = this.buildingSystem.place(target.col, target.row);
+    if (placement === null) throw new Error(`Не удалось разместить стену (${target.col}, ${target.row}).`);
+    this.inventoryUI.updateFromModel();
+    this.updateInventoryHud();
+    this.showInteractionMessage('Построено: Деревянная стена');
+    this.updateBuildingPreview();
+    return true;
+  }
+
+  cleanupBuildingInterface() {
+    if (this.buildingCleanupDone) return;
+    this.buildingCleanupDone = true;
+    this.exitBuildMode();
+    this.resetBuildTogglePointer();
+    this.resetPlacePointer();
+    this.buildToggleButton.off('pointerdown', this.onBuildTogglePointerDown);
+    this.placeButton.off('pointerdown', this.onPlacePointerDown);
+    this.input.off('pointerup', this.onBuildingPointerEnd);
+    this.input.off('pointerupoutside', this.onBuildingPointerEnd);
+    this.scale.off('resize', this.onBuildingResize);
+    window.removeEventListener('pointerup', this.onBuildingWindowPointerEnd);
+    window.removeEventListener('pointercancel', this.onBuildingWindowPointerEnd);
+    window.removeEventListener('blur', this.onBuildingBlur);
+    document.removeEventListener('visibilitychange', this.onBuildingVisibilityChange);
+    this.events.off(Phaser.Scenes.Events.SHUTDOWN, this.cleanupBuildingInterface, this);
+    this.events.off(Phaser.Scenes.Events.DESTROY, this.cleanupBuildingInterface, this);
+    if (this.buildingSystem) {
+      this.buildingSystem.clear();
+      this.buildingSystem = null;
+    }
+    [this.buildToggleButton, this.buildToggleLabel, this.placeButton, this.placeButtonLabel]
+      .forEach((element) => {
+        if (element && element.active) element.destroy();
+      });
+    this.buildToggleButton = null;
+    this.buildToggleLabel = null;
+    this.placeButton = null;
+    this.placeButtonLabel = null;
+  }
+
   positionUseButton() {
     const x = this.scale.gameSize.width - 176;
     const y = this.scale.gameSize.height - 92;
@@ -1111,7 +1380,9 @@ class GameScene extends Phaser.Scene {
   }
 
   tryUseActiveItem() {
-    if (this.isDeathHandled || this.isBlockingPanelOpen()) return false;
+    if (this.isDeathHandled || this.isBlockingPanelOpen() || this.buildingSystem.isActive()) {
+      return false;
+    }
     const slotIndex = this.inventoryUI.getActiveHotbarIndex();
     const slot = this.inventoryModel.getSlot(slotIndex);
     if (slot === null) {
@@ -1150,6 +1421,7 @@ class GameScene extends Phaser.Scene {
     if (this.virtualJoystick) this.virtualJoystick.reset();
     this.resetActionButton();
     this.resetUseButton();
+    this.exitBuildMode();
     if (this.inventoryUI && this.inventoryUI.isOpen) this.inventoryUI.closePanel();
     if (this.craftingUI && this.craftingUI.isOpen) this.craftingUI.closePanel();
     this.targetMarker.setVisible(false);
@@ -1191,6 +1463,7 @@ class GameScene extends Phaser.Scene {
       this.inventoryUI.closePanel();
       return;
     }
+    if (isOpen && this.buildingSystem && this.buildingSystem.isActive()) this.exitBuildMode();
     if (isOpen && this.craftingUI && this.craftingUI.isOpen) this.craftingUI.closePanel();
     this.handleBlockingPanelChanged(isOpen);
   }
@@ -1200,6 +1473,7 @@ class GameScene extends Phaser.Scene {
       this.craftingUI.closePanel();
       return;
     }
+    if (isOpen && this.buildingSystem && this.buildingSystem.isActive()) this.exitBuildMode();
     if (isOpen && this.inventoryUI && this.inventoryUI.isOpen) this.inventoryUI.closePanel();
     this.handleBlockingPanelChanged(isOpen);
   }
@@ -1270,6 +1544,11 @@ class GameScene extends Phaser.Scene {
       return;
     }
 
+    if (Phaser.Input.Keyboard.JustDown(this.buildToggleKey)) this.toggleBuildMode();
+    if (this.buildingSystem.isActive() && Phaser.Input.Keyboard.JustDown(this.cancelBuildKey)) {
+      this.exitBuildMode();
+    }
+
     let horizontal = 0;
     let vertical = 0;
 
@@ -1284,12 +1563,25 @@ class GameScene extends Phaser.Scene {
       vertical + joystickDirection.y
     );
 
+    if (movement.lengthSq() > 0) {
+      if (Math.abs(movement.x) >= Math.abs(movement.y)) {
+        this.lastFacingDirection = movement.x < 0 ? 'left' : 'right';
+      } else {
+        this.lastFacingDirection = movement.y < 0 ? 'up' : 'down';
+      }
+    }
+
     if (movement.lengthSq() > 1) movement.normalize();
     movement.scale(PLAYER_SPEED);
 
     this.player.setVelocity(movement.x, movement.y);
     this.updateWorldDepth(this.player);
     this.collectNearbyGroundItems();
+    if (this.buildingSystem.isActive()) {
+      this.updateBuildingPreview();
+      if (Phaser.Input.Keyboard.JustDown(this.placeBuildKey)) this.tryPlaceBuilding();
+      return;
+    }
     this.updateInteractionTarget();
 
     if (Phaser.Input.Keyboard.JustDown(this.useKey)) {

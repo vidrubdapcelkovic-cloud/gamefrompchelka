@@ -64,6 +64,25 @@ class InventoryModel {
     return removed;
   }
 
+  consumeItem(itemType, quantity) {
+    if (!ItemCatalog[itemType]) throw new Error(`Неизвестный тип предмета: ${itemType}.`);
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      throw new Error(`Количество для расходования должно быть положительным целым числом: ${quantity}.`);
+    }
+    if (this.getTotal(itemType) < quantity) return false;
+
+    let remaining = quantity;
+    for (let index = 0; index < this.slots.length && remaining > 0; index += 1) {
+      const slot = this.slots[index];
+      if (slot === null || slot.itemType !== itemType) continue;
+      const consumed = Math.min(slot.quantity, remaining);
+      slot.quantity -= consumed;
+      remaining -= consumed;
+      if (slot.quantity === 0) this.slots[index] = null;
+    }
+    return true;
+  }
+
   moveOrMerge(fromIndex, toIndex) {
     this.validateSlotIndex(fromIndex);
     this.validateSlotIndex(toIndex);
