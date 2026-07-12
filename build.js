@@ -9,6 +9,7 @@ const requiredRelativePaths = [
   'src/data/FixedWorldObjects.js',
   'src/world/WorldGrid.js',
   'src/systems/InteractionSystem.js',
+  'src/systems/HoldActionSystem.js',
   'src/VirtualJoystick.js',
   'src/GameScene.js',
   'src/main.js'
@@ -39,6 +40,7 @@ const fixedMapData = fs.readFileSync(requireFile('src/data/FixedMapData.js'), 'u
 const fixedWorldObjects = fs.readFileSync(requireFile('src/data/FixedWorldObjects.js'), 'utf8');
 const worldGrid = fs.readFileSync(requireFile('src/world/WorldGrid.js'), 'utf8');
 const interactionSystem = fs.readFileSync(requireFile('src/systems/InteractionSystem.js'), 'utf8');
+const holdActionSystem = fs.readFileSync(requireFile('src/systems/HoldActionSystem.js'), 'utf8');
 const virtualJoystick = fs.readFileSync(requireFile('src/VirtualJoystick.js'), 'utf8');
 const gameScene = fs.readFileSync(requireFile('src/GameScene.js'), 'utf8');
 const main = fs.readFileSync(requireFile('src/main.js'), 'utf8');
@@ -71,6 +73,7 @@ ${safeScript(fixedMapData)}
 ${safeScript(fixedWorldObjects)}
 ${safeScript(worldGrid)}
 ${safeScript(interactionSystem)}
+${safeScript(holdActionSystem)}
 ${safeScript(virtualJoystick)}
 ${safeScript(gameScene)}
 ${safeScript(main)}
@@ -94,6 +97,7 @@ const pagesHtml = `<!doctype html>
     <script src="./src/data/FixedWorldObjects.js"></script>
     <script src="./src/world/WorldGrid.js"></script>
     <script src="./src/systems/InteractionSystem.js"></script>
+    <script src="./src/systems/HoldActionSystem.js"></script>
     <script src="./src/VirtualJoystick.js"></script>
     <script src="./src/GameScene.js"></script>
     <script src="./src/main.js"></script>
@@ -128,6 +132,7 @@ fs.copyFileSync(requireFile('src/data/FixedMapData.js'), path.join(docsDataDirec
 fs.copyFileSync(requireFile('src/data/FixedWorldObjects.js'), path.join(docsDataDirectory, 'FixedWorldObjects.js'));
 fs.copyFileSync(requireFile('src/world/WorldGrid.js'), path.join(docsWorldDirectory, 'WorldGrid.js'));
 fs.copyFileSync(requireFile('src/systems/InteractionSystem.js'), path.join(docsSystemsDirectory, 'InteractionSystem.js'));
+fs.copyFileSync(requireFile('src/systems/HoldActionSystem.js'), path.join(docsSystemsDirectory, 'HoldActionSystem.js'));
 fs.copyFileSync(requireFile('src/VirtualJoystick.js'), path.join(docsSrcDirectory, 'VirtualJoystick.js'));
 fs.copyFileSync(requireFile('src/GameScene.js'), path.join(docsSrcDirectory, 'GameScene.js'));
 fs.copyFileSync(requireFile('src/main.js'), path.join(docsSrcDirectory, 'main.js'));

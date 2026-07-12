@@ -493,11 +493,27 @@ class GameScene extends Phaser.Scene {
     this.interactionCleanupDone = false;
     this.actionPointerId = null;
     this.actionNativePointerId = null;
+    this.holdInputSource = null;
+    this.holdActionSystem = new HoldActionSystem();
 
     this.targetMarker = this.add.circle(0, 0, 18, 0xffe16a, 0.18)
       .setStrokeStyle(3, 0xfff2a8, 0.95)
       .setDepth(INTERFACE_DEPTH - 10)
       .setVisible(false);
+
+    this.holdProgressBackground = this.add.rectangle(0, 0, 84, 14, 0x14202a, 0.9)
+      .setStrokeStyle(2, 0xfff2a8, 0.9)
+      .setDepth(INTERFACE_DEPTH - 9)
+      .setVisible(false);
+    this.holdProgressFill = this.add.rectangle(0, 0, 78, 8, 0x6fda83, 1)
+      .setOrigin(0, 0.5)
+      .setDepth(INTERFACE_DEPTH - 8)
+      .setVisible(false);
+    this.holdProgressText = this.add.text(0, 0, '0%', {
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '12px',
+      color: '#ffffff'
+    }).setOrigin(0.5).setDepth(INTERFACE_DEPTH - 7).setVisible(false);
 
     this.actionButton = this.add.circle(0, 0, 36, 0x263642, 0.42)
       .setStrokeStyle(3, 0xb9cbd6, 0.5)
@@ -538,23 +554,23 @@ class GameScene extends Phaser.Scene {
       this.actionNativePointerId = pointer.event ? pointer.event.pointerId : null;
       this.actionButton.setScale(0.92);
       this.actionButtonLabel.setScale(0.92);
-      this.tryInteract();
+      if (!this.startInteractionHold('pointer')) this.resetActionButton();
     };
     this.onActionPointerEnd = (pointer) => {
-      if (pointer.id === this.actionPointerId) this.resetActionButton();
+      if (pointer.id === this.actionPointerId) this.releaseInteractionHold('pointer');
     };
     this.onActionPointerOut = (pointer) => {
-      if (pointer.id === this.actionPointerId) this.resetActionButton();
+      if (pointer.id === this.actionPointerId) this.releaseInteractionHold('pointer');
     };
     this.onActionWindowPointerEnd = (event) => {
-      if (event.pointerId === this.actionNativePointerId) this.resetActionButton();
+      if (event.pointerId === this.actionNativePointerId) this.releaseInteractionHold('pointer');
     };
     this.onActionVisibilityChange = () => {
-      if (document.hidden) this.resetActionButton();
+      if (document.hidden) this.cancelInteractionHold();
     };
-    this.onActionBlur = () => this.resetActionButton();
+    this.onActionBlur = () => this.cancelInteractionHold();
     this.onActionResize = () => {
-      this.resetActionButton();
+      this.cancelInteractionHold();
       this.positionActionButton();
     };
 
@@ -591,7 +607,6 @@ class GameScene extends Phaser.Scene {
         .setVisible(true);
     } else {
       this.targetMarker.setVisible(false);
-      this.resetActionButton();
     }
 
     this.actionButton.setFillStyle(hasTarget ? 0x3f8f5b : 0x263642, hasTarget ? 0.82 : 0.42);
@@ -599,17 +614,92 @@ class GameScene extends Phaser.Scene {
     this.actionButtonLabel.setColor(hasTarget ? '#ffffff' : '#b9cbd6');
   }
 
-  tryInteract() {
+  startInteractionHold(source) {
     const target = this.interactionSystem.getCurrentTarget();
-    if (target === null) return;
+    if (target === null || this.holdInputSource !== null) return false;
 
-    this.interactionResultText.setText(`${target.type}: ${target.id}`).setVisible(true);
+    const started = this.holdActionSystem.start(target);
+    if (!started) return false;
+
+    this.holdInputSource = source;
+    this.updateHoldProgress(target, 0);
+    return true;
+  }
+
+  updateInteractionHold(delta) {
+    const wasActive = this.holdActionSystem.active;
+    const completedTarget = this.holdActionSystem.update(
+      delta,
+      this.interactionSystem.getCurrentTarget()
+    );
+
+    if (completedTarget !== null) {
+      this.completeInteraction(completedTarget);
+      this.hideHoldProgress();
+      this.actionButton.setScale(1);
+      this.actionButtonLabel.setScale(1);
+      return;
+    }
+
+    if (wasActive && !this.holdActionSystem.active) {
+      this.cancelInteractionHold();
+      return;
+    }
+
+    if (this.holdActionSystem.active) {
+      this.updateHoldProgress(
+        this.holdActionSystem.target,
+        this.holdActionSystem.getProgress()
+      );
+    }
+  }
+
+  updateHoldProgress(target, progress) {
+    const x = target.interactionX;
+    const y = target.interactionY - 50;
+    const percent = Math.round(progress * 100);
+
+    this.holdProgressBackground.setPosition(x, y).setVisible(true);
+    this.holdProgressFill
+      .setPosition(x - 39, y)
+      .setScale(progress, 1)
+      .setVisible(true);
+    this.holdProgressText.setPosition(x, y).setText(`${percent}%`).setVisible(true);
+  }
+
+  hideHoldProgress() {
+    this.holdProgressBackground.setVisible(false);
+    this.holdProgressFill.setVisible(false);
+    this.holdProgressText.setVisible(false);
+  }
+
+  completeInteraction(target) {
+    this.interactionResultText
+      .setText(`${target.type}: действие завершено`)
+      .setVisible(true);
+
     this.interactionMessageTimer.reset({
       delay: 1000,
       loop: true,
       paused: false,
       callback: this.hideInteractionMessage
     });
+  }
+
+  cancelInteractionHold() {
+    this.holdActionSystem.release();
+    this.holdInputSource = null;
+    this.hideHoldProgress();
+    this.resetActionButton();
+  }
+
+  releaseInteractionHold(source) {
+    if (this.holdInputSource !== source) return;
+
+    this.holdActionSystem.release();
+    this.holdInputSource = null;
+    this.hideHoldProgress();
+    this.resetActionButton();
   }
 
   resetActionButton() {
@@ -622,7 +712,7 @@ class GameScene extends Phaser.Scene {
   cleanupInteractionInterface() {
     if (this.interactionCleanupDone) return;
     this.interactionCleanupDone = true;
-    this.resetActionButton();
+    this.cancelInteractionHold();
 
     this.actionButton.off('pointerdown', this.onActionPointerDown);
     this.actionButton.off('pointerout', this.onActionPointerOut);
@@ -729,7 +819,7 @@ class GameScene extends Phaser.Scene {
     }).setScrollFactor(0).setDepth(INTERFACE_DEPTH);
   }
 
-  update() {
+  update(time, delta) {
     let horizontal = 0;
     let vertical = 0;
 
@@ -752,7 +842,13 @@ class GameScene extends Phaser.Scene {
     this.updateInteractionTarget();
 
     if (Phaser.Input.Keyboard.JustDown(this.interactKey)) {
-      this.tryInteract();
+      this.startInteractionHold('keyboard');
     }
+
+    if (this.holdInputSource === 'keyboard' && !this.interactKey.isDown) {
+      this.releaseInteractionHold('keyboard');
+    }
+
+    this.updateInteractionHold(delta);
   }
 }
