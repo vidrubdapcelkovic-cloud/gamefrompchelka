@@ -25,6 +25,7 @@ class GameScene extends Phaser.Scene {
     this.createInterface();
     this.createInteractionInterface();
     this.createVirtualJoystick();
+    this.createInventoryUI();
     this.registerLifecycleHandlers();
   }
 
@@ -607,6 +608,7 @@ class GameScene extends Phaser.Scene {
     });
 
     this.onActionPointerDown = (pointer) => {
+      if (this.inventoryUI && this.inventoryUI.isOpen) return;
       if (this.actionPointerId !== null || this.interactionSystem.getCurrentTarget() === null) return;
 
       this.actionPointerId = pointer.id;
@@ -811,7 +813,10 @@ class GameScene extends Phaser.Scene {
       this.groundItemSystem = null;
     }
     if (this.runtimeWorldObjects) this.runtimeWorldObjects.clear();
-    if (this.inventoryModel) this.inventoryModel.clear();
+    if (this.inventoryModel) {
+      this.inventoryModel.clear();
+      if (this.inventoryUI && !this.inventoryUI.destroyed) this.inventoryUI.updateFromModel();
+    }
 
     this.actionButton.off('pointerdown', this.onActionPointerDown);
     this.actionButton.off('pointerout', this.onActionPointerOut);
@@ -927,6 +932,28 @@ class GameScene extends Phaser.Scene {
     this.updateInventoryHud();
   }
 
+  createInventoryUI() {
+    this.inventoryUI = new InventoryUI(
+      this,
+      this.inventoryModel,
+      {
+        WOOD: 'temporary-ground-wood',
+        STONE: 'temporary-ground-stone',
+        BERRIES: 'temporary-ground-berries'
+      },
+      (isOpen) => this.handleInventoryOpenChanged(isOpen)
+    );
+  }
+
+  handleInventoryOpenChanged(isOpen) {
+    this.cancelInteractionHold();
+    if (this.virtualJoystick) this.virtualJoystick.reset();
+    this.resetActionButton();
+    if (this.input.keyboard) this.input.keyboard.resetKeys();
+    if (this.player && this.player.body) this.player.setVelocity(0, 0);
+    if (!isOpen) this.updateInteractionTarget();
+  }
+
   updateInventoryHud() {
     this.inventoryHudText.setText(
       `WOOD: ${this.inventoryModel.getTotal('WOOD')}  `
@@ -956,11 +983,18 @@ class GameScene extends Phaser.Scene {
         this.groundItemSystem.updateQuantity(item.id, remainder);
       }
       this.updateInventoryHud();
+      this.inventoryUI.updateFromModel();
       this.showInteractionMessage(`Подобрано: ${item.itemType} ×${pickedUp}`);
     });
   }
 
   update(time, delta) {
+    if (this.inventoryUI && this.inventoryUI.isOpen) {
+      this.player.setVelocity(0, 0);
+      this.updateWorldDepth(this.player);
+      return;
+    }
+
     let horizontal = 0;
     let vertical = 0;
 
