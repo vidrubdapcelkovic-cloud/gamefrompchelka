@@ -38,6 +38,50 @@ class InventoryModel {
     return this.slots.map((slot) => (slot === null ? null : { ...slot }));
   }
 
+  validateSlotIndex(index) {
+    if (!Number.isInteger(index) || index < 0 || index >= INVENTORY_SLOT_COUNT) {
+      throw new Error(`Индекс слота должен быть целым числом от 0 до 24: ${index}.`);
+    }
+  }
+
+  getSlot(index) {
+    this.validateSlotIndex(index);
+    const slot = this.slots[index];
+    return slot === null ? null : { ...slot };
+  }
+
+  moveOrMerge(fromIndex, toIndex) {
+    this.validateSlotIndex(fromIndex);
+    this.validateSlotIndex(toIndex);
+    if (fromIndex === toIndex) return false;
+
+    const source = this.slots[fromIndex];
+    if (source === null) return false;
+    const target = this.slots[toIndex];
+
+    if (target === null) {
+      this.slots[toIndex] = source;
+      this.slots[fromIndex] = null;
+      return { type: 'move', movedQuantity: source.quantity };
+    }
+
+    if (target.itemType === source.itemType) {
+      const maxStack = ItemCatalog[source.itemType].maxStack;
+      const available = maxStack - target.quantity;
+      if (available <= 0) return false;
+
+      const movedQuantity = Math.min(available, source.quantity);
+      target.quantity += movedQuantity;
+      source.quantity -= movedQuantity;
+      if (source.quantity === 0) this.slots[fromIndex] = null;
+      return { type: 'merge', movedQuantity };
+    }
+
+    this.slots[fromIndex] = target;
+    this.slots[toIndex] = source;
+    return { type: 'swap', movedQuantity: source.quantity };
+  }
+
   getTotal(itemType) {
     if (!ItemCatalog[itemType]) throw new Error(`Неизвестный тип предмета: ${itemType}.`);
     return this.slots.reduce(
