@@ -14,6 +14,7 @@ class GameScene extends Phaser.Scene {
     this.createCamera();
     this.createInterface();
     this.createVirtualJoystick();
+    this.registerLifecycleHandlers();
   }
 
   createWorld() {
@@ -92,6 +93,60 @@ class GameScene extends Phaser.Scene {
 
   createVirtualJoystick() {
     this.virtualJoystick = new VirtualJoystick(this);
+  }
+
+  registerLifecycleHandlers() {
+    this.lifecycleHandlersRemoved = false;
+    this.pendingScaleRefresh = null;
+
+    this.resetControls = () => {
+      if (this.input.keyboard) this.input.keyboard.resetKeys();
+      if (this.virtualJoystick) this.virtualJoystick.reset();
+      if (this.player && this.player.body) this.player.setVelocity(0, 0);
+    };
+
+    this.refreshScaleAfterLayout = () => {
+      this.resetControls();
+      if (this.pendingScaleRefresh !== null) {
+        window.cancelAnimationFrame(this.pendingScaleRefresh);
+      }
+      this.pendingScaleRefresh = window.requestAnimationFrame(() => {
+        this.pendingScaleRefresh = null;
+        if (this.sys.isActive()) this.scale.refresh();
+      });
+    };
+
+    this.onVisibilityChange = () => {
+      this.resetControls();
+      if (!document.hidden) this.refreshScaleAfterLayout();
+    };
+
+    this.scale.on('resize', this.resetControls);
+    window.addEventListener('blur', this.resetControls);
+    window.addEventListener('focus', this.refreshScaleAfterLayout);
+    window.addEventListener('orientationchange', this.refreshScaleAfterLayout);
+    document.addEventListener('visibilitychange', this.onVisibilityChange);
+
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.removeLifecycleHandlers, this);
+    this.events.once(Phaser.Scenes.Events.DESTROY, this.removeLifecycleHandlers, this);
+  }
+
+  removeLifecycleHandlers() {
+    if (this.lifecycleHandlersRemoved) return;
+    this.lifecycleHandlersRemoved = true;
+
+    if (this.pendingScaleRefresh !== null) {
+      window.cancelAnimationFrame(this.pendingScaleRefresh);
+      this.pendingScaleRefresh = null;
+    }
+
+    this.scale.off('resize', this.resetControls);
+    window.removeEventListener('blur', this.resetControls);
+    window.removeEventListener('focus', this.refreshScaleAfterLayout);
+    window.removeEventListener('orientationchange', this.refreshScaleAfterLayout);
+    document.removeEventListener('visibilitychange', this.onVisibilityChange);
+    this.events.off(Phaser.Scenes.Events.SHUTDOWN, this.removeLifecycleHandlers, this);
+    this.events.off(Phaser.Scenes.Events.DESTROY, this.removeLifecycleHandlers, this);
   }
 
   createCamera() {

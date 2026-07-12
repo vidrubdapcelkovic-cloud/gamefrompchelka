@@ -51,7 +51,7 @@ const autonomousHtml = `<!doctype html>
 <html lang="ru">
   <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
     <title>Прототип выживалки — автономная версия</title>
     <style>\n${pageCss}    </style>
   </head>
@@ -71,7 +71,7 @@ const pagesHtml = `<!doctype html>
 <html lang="ru">
   <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
     <title>Прототип выживалки</title>
     <link rel="stylesheet" href="./styles/game.css">
   </head>
