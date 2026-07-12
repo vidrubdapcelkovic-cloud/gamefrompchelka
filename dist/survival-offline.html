@@ -88,6 +88,43 @@ const FixedMapData = Object.freeze({
   ])
 });
 
+const FixedWorldObjects = Object.freeze([
+  Object.freeze({ id: 'tree-01', type: 'TREE', col: 3, row: 3 }),
+  Object.freeze({ id: 'tree-02', type: 'TREE', col: 10, row: 3 }),
+  Object.freeze({ id: 'tree-03', type: 'TREE', col: 17, row: 4 }),
+  Object.freeze({ id: 'tree-04', type: 'TREE', col: 25, row: 4 }),
+  Object.freeze({ id: 'tree-05', type: 'TREE', col: 33, row: 5 }),
+  Object.freeze({ id: 'tree-06', type: 'TREE', col: 44, row: 4 }),
+  Object.freeze({ id: 'tree-07', type: 'TREE', col: 4, row: 16 }),
+  Object.freeze({ id: 'tree-08', type: 'TREE', col: 12, row: 18 }),
+  Object.freeze({ id: 'tree-09', type: 'TREE', col: 34, row: 18 }),
+  Object.freeze({ id: 'tree-10', type: 'TREE', col: 44, row: 19 }),
+  Object.freeze({ id: 'tree-11', type: 'TREE', col: 5, row: 30 }),
+  Object.freeze({ id: 'tree-12', type: 'TREE', col: 16, row: 31 }),
+  Object.freeze({ id: 'tree-13', type: 'TREE', col: 29, row: 30 }),
+  Object.freeze({ id: 'tree-14', type: 'TREE', col: 43, row: 31 }),
+
+  Object.freeze({ id: 'rock-01', type: 'ROCK', col: 7, row: 14 }),
+  Object.freeze({ id: 'rock-02', type: 'ROCK', col: 20, row: 8 }),
+  Object.freeze({ id: 'rock-03', type: 'ROCK', col: 30, row: 10 }),
+  Object.freeze({ id: 'rock-04', type: 'ROCK', col: 36, row: 16 }),
+  Object.freeze({ id: 'rock-05', type: 'ROCK', col: 42, row: 23 }),
+  Object.freeze({ id: 'rock-06', type: 'ROCK', col: 9, row: 27 }),
+  Object.freeze({ id: 'rock-07', type: 'ROCK', col: 20, row: 27 }),
+  Object.freeze({ id: 'rock-08', type: 'ROCK', col: 31, row: 26 }),
+  Object.freeze({ id: 'rock-09', type: 'ROCK', col: 44, row: 28 }),
+  Object.freeze({ id: 'rock-10', type: 'ROCK', col: 27, row: 33 }),
+
+  Object.freeze({ id: 'berry-01', type: 'BERRY_BUSH', col: 14, row: 7 }),
+  Object.freeze({ id: 'berry-02', type: 'BERRY_BUSH', col: 27, row: 7 }),
+  Object.freeze({ id: 'berry-03', type: 'BERRY_BUSH', col: 4, row: 10 }),
+  Object.freeze({ id: 'berry-04', type: 'BERRY_BUSH', col: 18, row: 14 }),
+  Object.freeze({ id: 'berry-05', type: 'BERRY_BUSH', col: 31, row: 20 }),
+  Object.freeze({ id: 'berry-06', type: 'BERRY_BUSH', col: 10, row: 23 }),
+  Object.freeze({ id: 'berry-07', type: 'BERRY_BUSH', col: 24, row: 25 }),
+  Object.freeze({ id: 'berry-08', type: 'BERRY_BUSH', col: 38, row: 31 })
+]);
+
 class WorldGrid {
   constructor(mapData = FixedMapData) {
     this.tileSize = mapData.tileSize;
@@ -291,6 +328,9 @@ class VirtualJoystick {
 
 const PLAYER_SPEED = 260;
 const SURFACE_TILE_INDICES = Object.freeze({ G: 0, S: 1, W: 2, R: 3 });
+const WORLD_OBJECT_TYPES = Object.freeze(['TREE', 'ROCK', 'BERRY_BUSH']);
+const WORLD_DEPTH_SCALE = 0.1;
+const INTERFACE_DEPTH = 2000;
 
 class GameScene extends Phaser.Scene {
   constructor() {
@@ -300,6 +340,7 @@ class GameScene extends Phaser.Scene {
   create() {
     this.createWorld();
     this.createPlayer();
+    this.createWorldObjects();
     this.createControls();
     this.createCamera();
     this.createInterface();
@@ -517,6 +558,229 @@ class GameScene extends Phaser.Scene {
     this.player.setCollideWorldBounds(true);
     this.player.body.setSize(40, 40);
     this.playerMapCollider = this.physics.add.collider(this.player, this.surfaceLayer);
+    this.updateWorldDepth(this.player);
+  }
+
+  createWorldObjects() {
+    this.validateWorldObjects();
+    this.createWorldObjectTextures();
+
+    this.worldObjects = [];
+    this.treeBlockers = [];
+    this.blockingWorldObjects = this.physics.add.staticGroup();
+
+    FixedWorldObjects.forEach((objectData) => {
+      const position = this.worldGrid.cellToWorldCenter(objectData.col, objectData.row);
+      const textureKey = {
+        TREE: 'temporary-tree',
+        ROCK: 'temporary-rock',
+        BERRY_BUSH: 'temporary-berry-bush'
+      }[objectData.type];
+      const gameObject = objectData.type === 'ROCK'
+        ? this.blockingWorldObjects.create(position.x, position.y, textureKey)
+        : this.add.image(position.x, position.y, textureKey);
+
+      gameObject.setDataEnabled();
+      gameObject.setData('id', objectData.id);
+      gameObject.setData('type', objectData.type);
+      gameObject.setData('col', objectData.col);
+      gameObject.setData('row', objectData.row);
+      this.updateWorldDepth(gameObject);
+
+      if (objectData.type === 'TREE') {
+        const treeBounds = gameObject.getBounds();
+        const blocker = this.blockingWorldObjects.create(
+          treeBounds.centerX,
+          treeBounds.bottom - 8,
+          'temporary-tree-blocker'
+        );
+        blocker.setVisible(false);
+        blocker.setDataEnabled();
+        blocker.setData('ownerId', objectData.id);
+        blocker.setData('type', objectData.type);
+        blocker.setData('col', objectData.col);
+        blocker.setData('row', objectData.row);
+        this.treeBlockers.push(blocker);
+      } else if (objectData.type === 'ROCK') {
+        gameObject.body.setSize(24, 18);
+        gameObject.body.setOffset(4, 14);
+        gameObject.refreshBody();
+      }
+
+      this.worldObjects.push(gameObject);
+    });
+
+    this.validateTreeBlockerGeometry();
+    this.worldObjectsCollider = this.physics.add.collider(
+      this.player,
+      this.blockingWorldObjects
+    );
+  }
+
+  validateWorldObjects() {
+    const ids = new Set();
+    const occupiedCells = new Set();
+    const allowedTypes = new Set(WORLD_OBJECT_TYPES);
+    const start = FixedMapData.playerStart;
+
+    FixedWorldObjects.forEach((objectData) => {
+      const details = `id: ${objectData.id}, type: ${objectData.type}, col: ${objectData.col}, row: ${objectData.row}`;
+
+      if (ids.has(objectData.id)) {
+        throw new Error(`Повторяющийся id объекта мира (${details}).`);
+      }
+      ids.add(objectData.id);
+
+      if (!allowedTypes.has(objectData.type)) {
+        throw new Error(`Недопустимый тип объекта мира (${details}).`);
+      }
+
+      if (!Number.isInteger(objectData.col) || !Number.isInteger(objectData.row)) {
+        throw new Error(`Координаты объекта мира должны быть целыми (${details}).`);
+      }
+
+      if (!this.worldGrid.isInside(objectData.col, objectData.row)) {
+        throw new Error(`Объект мира находится вне карты (${details}).`);
+      }
+
+      if (!this.worldGrid.isWalkable(objectData.col, objectData.row)) {
+        throw new Error(`Объект мира находится на непроходимой клетке (${details}).`);
+      }
+
+      const cellKey = `${objectData.col},${objectData.row}`;
+      if (occupiedCells.has(cellKey)) {
+        throw new Error(`Несколько объектов мира занимают одну клетку (${details}).`);
+      }
+      occupiedCells.add(cellKey);
+
+      const distanceFromStart = Math.max(
+        Math.abs(objectData.col - start.col),
+        Math.abs(objectData.row - start.row)
+      );
+      if (distanceFromStart <= 2) {
+        throw new Error(`Объект мира находится слишком близко к старту игрока (${details}).`);
+      }
+    });
+  }
+
+  createWorldObjectTextures() {
+    if (!this.textures.exists('temporary-tree')) {
+      const tree = this.make.graphics({ x: 0, y: 0, add: false });
+      tree.fillStyle(0x76502f, 1);
+      tree.fillRect(19, 34, 10, 30);
+      tree.fillStyle(0x285a35, 1);
+      tree.fillCircle(24, 22, 20);
+      tree.fillStyle(0x397343, 1);
+      tree.fillCircle(14, 25, 12);
+      tree.fillCircle(34, 25, 12);
+      tree.fillStyle(0x4b8a50, 1);
+      tree.fillRect(19, 9, 10, 6);
+      tree.generateTexture('temporary-tree', 48, 64);
+      tree.destroy();
+    }
+
+    if (!this.textures.exists('temporary-rock')) {
+      const rock = this.make.graphics({ x: 0, y: 0, add: false });
+      rock.fillStyle(0x555b61, 1);
+      rock.fillRoundedRect(2, 7, 28, 23, 8);
+      rock.fillStyle(0x838a91, 1);
+      rock.fillRoundedRect(7, 5, 17, 12, 5);
+      rock.fillStyle(0x3f4449, 1);
+      rock.fillRect(20, 19, 6, 5);
+      rock.generateTexture('temporary-rock', 32, 32);
+      rock.destroy();
+    }
+
+    if (!this.textures.exists('temporary-tree-blocker')) {
+      const blocker = this.make.graphics({ x: 0, y: 0, add: false });
+      blocker.fillStyle(0xffffff, 0);
+      blocker.fillRect(0, 0, 18, 16);
+      blocker.generateTexture('temporary-tree-blocker', 18, 16);
+      blocker.destroy();
+    }
+
+    if (!this.textures.exists('temporary-berry-bush')) {
+      const bush = this.make.graphics({ x: 0, y: 0, add: false });
+      bush.fillStyle(0x315f35, 1);
+      bush.fillCircle(10, 18, 9);
+      bush.fillCircle(21, 17, 10);
+      bush.fillCircle(16, 10, 9);
+      bush.fillStyle(0xc53f57, 1);
+      bush.fillCircle(9, 14, 3);
+      bush.fillCircle(22, 13, 3);
+      bush.fillCircle(17, 22, 3);
+      bush.generateTexture('temporary-berry-bush', 32, 32);
+      bush.destroy();
+    }
+  }
+
+  validateTreeBlockerGeometry() {
+    const trees = this.worldObjects.filter((gameObject) => gameObject.getData('type') === 'TREE');
+
+    if (this.treeBlockers.length !== trees.length) {
+      throw new Error(
+        `Количество блокировщиков деревьев не совпадает с количеством спрайтов `
+        + `(спрайтов: ${trees.length}, блокировщиков: ${this.treeBlockers.length}).`
+      );
+    }
+
+    trees.forEach((tree) => {
+      const treeId = tree.getData('id');
+      const blockers = this.treeBlockers.filter(
+        (blocker) => blocker.getData('ownerId') === treeId
+      );
+
+      if (tree.body && tree.body.enable) {
+        throw new Error(`Визуальный спрайт дерева ${treeId} не должен иметь активное физическое тело.`);
+      }
+
+      if (blockers.length !== 1) {
+        throw new Error(
+          `Для дерева ${treeId} ожидался один блокировщик, найдено: ${blockers.length}.`
+        );
+      }
+
+      const blocker = blockers[0];
+      const treeBounds = tree.getBounds();
+      const body = blocker.body;
+      const bodyLeft = body.position.x;
+      const bodyTop = body.position.y;
+      const bodyRight = bodyLeft + body.width;
+      const bodyBottom = bodyTop + body.height;
+      const tolerance = 1;
+      const bodyDescription = `x: ${bodyLeft}, y: ${bodyTop}, width: ${body.width}, height: ${body.height}`;
+
+      if (body.width !== 18 || body.height !== 16) {
+        throw new Error(`Неверный размер блокировщика дерева ${treeId} (${bodyDescription}).`);
+      }
+
+      if (
+        bodyLeft < treeBounds.left - tolerance
+        || bodyRight > treeBounds.right + tolerance
+      ) {
+        throw new Error(`Блокировщик дерева ${treeId} вышел за горизонтальные границы (${bodyDescription}).`);
+      }
+
+      if (bodyTop < treeBounds.top + treeBounds.height * 0.75 - tolerance) {
+        throw new Error(`Блокировщик дерева ${treeId} пересекает область кроны (${bodyDescription}).`);
+      }
+
+      if (bodyBottom > treeBounds.bottom + tolerance) {
+        throw new Error(`Блокировщик дерева ${treeId} находится ниже изображения (${bodyDescription}).`);
+      }
+
+      if (
+        Math.abs(blocker.x - treeBounds.centerX) > tolerance
+        || Math.abs(blocker.y - (treeBounds.bottom - 8)) > tolerance
+      ) {
+        throw new Error(`Блокировщик дерева ${treeId} неверно выровнен (${bodyDescription}).`);
+      }
+    });
+  }
+
+  updateWorldDepth(gameObject) {
+    const bottom = gameObject.y + gameObject.displayHeight * (1 - gameObject.originY);
+    gameObject.setDepth(bottom * WORLD_DEPTH_SCALE);
   }
 
   createControls() {
@@ -598,26 +862,27 @@ class GameScene extends Phaser.Scene {
   createInterface() {
     const panel = this.add.rectangle(18, 18, 365, 96, 0x111820, 0.82)
       .setOrigin(0)
-      .setScrollFactor(0);
+      .setScrollFactor(0)
+      .setDepth(INTERFACE_DEPTH);
     panel.setStrokeStyle(2, 0xbad5e8, 0.5);
 
     this.add.text(34, 30, 'Прототип выживалки', {
       fontFamily: 'Arial, sans-serif',
       fontSize: '24px',
       color: '#ffffff'
-    }).setScrollFactor(0);
+    }).setScrollFactor(0).setDepth(INTERFACE_DEPTH);
 
     this.add.text(34, 61, 'Этап 1: основа', {
       fontFamily: 'Arial, sans-serif',
       fontSize: '18px',
       color: '#bde6ff'
-    }).setScrollFactor(0);
+    }).setScrollFactor(0).setDepth(INTERFACE_DEPTH);
 
     this.add.text(34, 88, 'Управление: WASD, стрелки или джойстик', {
       fontFamily: 'Arial, sans-serif',
       fontSize: '15px',
       color: '#e7edf2'
-    }).setScrollFactor(0);
+    }).setScrollFactor(0).setDepth(INTERFACE_DEPTH);
   }
 
   update() {
@@ -639,6 +904,7 @@ class GameScene extends Phaser.Scene {
     movement.scale(PLAYER_SPEED);
 
     this.player.setVelocity(movement.x, movement.y);
+    this.updateWorldDepth(this.player);
   }
 }
 

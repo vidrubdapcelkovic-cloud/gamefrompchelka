@@ -6,6 +6,7 @@ const requiredRelativePaths = [
   'index.html',
   'lib/phaser.min.js',
   'src/data/FixedMapData.js',
+  'src/data/FixedWorldObjects.js',
   'src/world/WorldGrid.js',
   'src/VirtualJoystick.js',
   'src/GameScene.js',
@@ -34,6 +35,7 @@ requiredRelativePaths.forEach(requireFile);
 const indexHtml = fs.readFileSync(requireFile('index.html'), 'utf8');
 const phaser = fs.readFileSync(requireFile('lib/phaser.min.js'), 'utf8');
 const fixedMapData = fs.readFileSync(requireFile('src/data/FixedMapData.js'), 'utf8');
+const fixedWorldObjects = fs.readFileSync(requireFile('src/data/FixedWorldObjects.js'), 'utf8');
 const worldGrid = fs.readFileSync(requireFile('src/world/WorldGrid.js'), 'utf8');
 const virtualJoystick = fs.readFileSync(requireFile('src/VirtualJoystick.js'), 'utf8');
 const gameScene = fs.readFileSync(requireFile('src/GameScene.js'), 'utf8');
@@ -64,6 +66,7 @@ const autonomousHtml = `<!doctype html>
     <script>
 ${safeScript(phaser)}
 ${safeScript(fixedMapData)}
+${safeScript(fixedWorldObjects)}
 ${safeScript(worldGrid)}
 ${safeScript(virtualJoystick)}
 ${safeScript(gameScene)}
@@ -85,6 +88,7 @@ const pagesHtml = `<!doctype html>
     <div id="game-container"></div>
     <script src="./lib/phaser.min.js"></script>
     <script src="./src/data/FixedMapData.js"></script>
+    <script src="./src/data/FixedWorldObjects.js"></script>
     <script src="./src/world/WorldGrid.js"></script>
     <script src="./src/VirtualJoystick.js"></script>
     <script src="./src/GameScene.js"></script>
@@ -116,6 +120,7 @@ const pagesIndexSize = writeFileWithSize(pagesIndexPath, pagesHtml);
 writeFileWithSize(pagesCssPath, pageCss);
 fs.copyFileSync(requireFile('lib/phaser.min.js'), path.join(docsLibDirectory, 'phaser.min.js'));
 fs.copyFileSync(requireFile('src/data/FixedMapData.js'), path.join(docsDataDirectory, 'FixedMapData.js'));
+fs.copyFileSync(requireFile('src/data/FixedWorldObjects.js'), path.join(docsDataDirectory, 'FixedWorldObjects.js'));
 fs.copyFileSync(requireFile('src/world/WorldGrid.js'), path.join(docsWorldDirectory, 'WorldGrid.js'));
 fs.copyFileSync(requireFile('src/VirtualJoystick.js'), path.join(docsSrcDirectory, 'VirtualJoystick.js'));
 fs.copyFileSync(requireFile('src/GameScene.js'), path.join(docsSrcDirectory, 'GameScene.js'));
