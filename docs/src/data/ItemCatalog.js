@@ -18,13 +18,19 @@ const ItemCatalog = Object.freeze({
     displayName: 'Каменный топор',
     maxStack: 1,
     category: 'TOOL',
-    consumable: false
+    consumable: false,
+    toolType: 'AXE',
+    effectiveAgainst: 'TREE',
+    actionDurationMs: 750
   }),
   STONE_PICKAXE: Object.freeze({
     id: 'STONE_PICKAXE',
     displayName: 'Каменная кирка',
     maxStack: 1,
     category: 'TOOL',
-    consumable: false
+    consumable: false,
+    toolType: 'PICKAXE',
+    effectiveAgainst: 'ROCK',
+    actionDurationMs: 850
   })
 });

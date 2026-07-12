@@ -573,6 +573,8 @@ class GameScene extends Phaser.Scene {
     this.actionPointerId = null;
     this.actionNativePointerId = null;
     this.holdInputSource = null;
+    this.holdStartHotbarIndex = null;
+    this.holdToolDisplayName = null;
     this.holdActionSystem = new HoldActionSystem();
 
     this.targetMarker = this.add.circle(0, 0, 18, 0xffe16a, 0.18)
@@ -701,16 +703,41 @@ class GameScene extends Phaser.Scene {
     const target = this.interactionSystem.getCurrentTarget();
     if (target === null || this.holdInputSource !== null) return false;
 
-    const started = this.holdActionSystem.start(target);
+    const configuration = this.getInteractionHoldConfiguration(target);
+    const started = this.holdActionSystem.start(target, configuration.durationOverride);
     if (!started) return false;
 
     this.holdInputSource = source;
+    this.holdStartHotbarIndex = configuration.hotbarIndex;
+    this.holdToolDisplayName = configuration.toolDisplayName;
     this.updateHoldProgress(target, 0);
     return true;
   }
 
+  getInteractionHoldConfiguration(target) {
+    const hotbarIndex = this.inventoryUI.getActiveHotbarIndex();
+    const slot = this.inventoryModel.getSlot(hotbarIndex);
+    const item = slot === null ? null : ItemCatalog[slot.itemType];
+    const isEffectiveTool = Boolean(
+      item
+      && item.effectiveAgainst === target.type
+      && Number.isFinite(item.actionDurationMs)
+      && item.actionDurationMs > 0
+    );
+    return {
+      hotbarIndex,
+      durationOverride: isEffectiveTool ? item.actionDurationMs : undefined,
+      toolDisplayName: isEffectiveTool ? item.displayName : null
+    };
+  }
+
   updateInteractionHold(delta) {
     const wasActive = this.holdActionSystem.active;
+    if (wasActive
+      && this.inventoryUI.getActiveHotbarIndex() !== this.holdStartHotbarIndex) {
+      this.cancelInteractionHold();
+      return;
+    }
     const completedTarget = this.holdActionSystem.update(
       delta,
       this.interactionSystem.getCurrentTarget()
@@ -747,7 +774,11 @@ class GameScene extends Phaser.Scene {
       .setPosition(x - 39, y)
       .setScale(progress, 1)
       .setVisible(true);
-    this.holdProgressText.setPosition(x, y).setText(`${percent}%`).setVisible(true);
+    const toolLabel = this.holdToolDisplayName ? ` · ${this.holdToolDisplayName}` : '';
+    this.holdProgressText
+      .setPosition(x, y)
+      .setText(`${percent}%${toolLabel}`)
+      .setVisible(true);
   }
 
   hideHoldProgress() {
@@ -806,6 +837,8 @@ class GameScene extends Phaser.Scene {
   cancelInteractionHold() {
     this.holdActionSystem.release();
     this.holdInputSource = null;
+    this.holdStartHotbarIndex = null;
+    this.holdToolDisplayName = null;
     this.hideHoldProgress();
     this.resetActionButton();
   }
@@ -815,6 +848,8 @@ class GameScene extends Phaser.Scene {
 
     this.holdActionSystem.release();
     this.holdInputSource = null;
+    this.holdStartHotbarIndex = null;
+    this.holdToolDisplayName = null;
     this.hideHoldProgress();
     this.resetActionButton();
   }

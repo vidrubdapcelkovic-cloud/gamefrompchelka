@@ -17,10 +17,12 @@ class HoldActionSystem {
     this.requiresRelease = false;
   }
 
-  start(target) {
+  start(target, durationOverride) {
     if (target === null || this.active || this.requiresRelease) return false;
 
-    const duration = this.durations[target.type];
+    const duration = durationOverride === undefined
+      ? this.durations[target.type]
+      : durationOverride;
     if (!Number.isFinite(duration) || duration <= 0) {
       throw new Error(`Не задана длительность удержания для типа ${target.type}.`);
     }
