@@ -50,6 +50,20 @@ class InventoryModel {
     return slot === null ? null : { ...slot };
   }
 
+  removeFromSlot(index, quantity) {
+    this.validateSlotIndex(index);
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      throw new Error(`Количество для удаления должно быть положительным целым числом: ${quantity}.`);
+    }
+    const slot = this.slots[index];
+    if (slot === null) return 0;
+
+    const removed = Math.min(quantity, slot.quantity);
+    slot.quantity -= removed;
+    if (slot.quantity === 0) this.slots[index] = null;
+    return removed;
+  }
+
   moveOrMerge(fromIndex, toIndex) {
     this.validateSlotIndex(fromIndex);
     this.validateSlotIndex(toIndex);

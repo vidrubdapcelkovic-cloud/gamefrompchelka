@@ -17,6 +17,8 @@ class GameScene extends Phaser.Scene {
 
   create() {
     this.inventoryModel = new InventoryModel();
+    this.playerStatsModel = new PlayerStatsModel();
+    this.isDeathHandled = false;
     this.createWorld();
     this.createPlayer();
     this.createWorldObjects();
@@ -26,6 +28,7 @@ class GameScene extends Phaser.Scene {
     this.createInteractionInterface();
     this.createVirtualJoystick();
     this.createInventoryUI();
+    this.createSurvivalInterface();
     this.registerLifecycleHandlers();
   }
 
@@ -543,6 +546,7 @@ class GameScene extends Phaser.Scene {
       right: Phaser.Input.Keyboard.KeyCodes.D
     });
     this.interactKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
+    this.useKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F);
   }
 
   createVirtualJoystick() {
@@ -608,6 +612,7 @@ class GameScene extends Phaser.Scene {
     });
 
     this.onActionPointerDown = (pointer) => {
+      if (this.isDeathHandled) return;
       if (this.inventoryUI && this.inventoryUI.isOpen) return;
       if (this.actionPointerId !== null || this.interactionSystem.getCurrentTarget() === null) return;
 
@@ -676,6 +681,7 @@ class GameScene extends Phaser.Scene {
   }
 
   startInteractionHold(source) {
+    if (this.isDeathHandled) return false;
     const target = this.interactionSystem.getCurrentTarget();
     if (target === null || this.holdInputSource !== null) return false;
 
@@ -945,13 +951,171 @@ class GameScene extends Phaser.Scene {
     );
   }
 
+  createSurvivalInterface() {
+    this.survivalCleanupDone = false;
+    this.usePointerId = null;
+    this.useNativePointerId = null;
+    this.statusHUD = new StatusHUD(this);
+    this.statusHUD.update(this.playerStatsModel.getHealth(), this.playerStatsModel.getHunger());
+
+    this.useButton = this.add.circle(0, 0, 30, 0x36516a, 0.88)
+      .setStrokeStyle(3, 0xc8e8ff, 0.85)
+      .setScrollFactor(0)
+      .setDepth(INTERFACE_DEPTH + 10)
+      .setInteractive();
+    this.useButtonLabel = this.add.text(0, 0, 'USE', {
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '14px',
+      fontStyle: 'bold',
+      color: '#ffffff'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 11);
+    this.deathText = this.add.text(480, 270, 'Вы погибли', {
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '44px',
+      fontStyle: 'bold',
+      color: '#ff9b9b',
+      backgroundColor: '#111820e6',
+      padding: { x: 24, y: 14 }
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 50).setVisible(false);
+
+    this.onUsePointerDown = (pointer, localX, localY, event) => {
+      if (event && event.stopPropagation) event.stopPropagation();
+      if (this.usePointerId !== null || this.isDeathHandled || this.inventoryUI.isOpen) return;
+      this.usePointerId = pointer.id;
+      this.useNativePointerId = pointer.event ? pointer.event.pointerId : null;
+      this.useButton.setScale(0.92);
+      this.useButtonLabel.setScale(0.92);
+      this.tryUseActiveItem();
+    };
+    this.onUsePointerEnd = (pointer) => {
+      if (pointer.id === this.usePointerId) this.resetUseButton();
+    };
+    this.onUseWindowPointerEnd = (event) => {
+      if (event.pointerId === this.useNativePointerId) this.resetUseButton();
+    };
+    this.onUseBlur = () => this.resetUseButton();
+    this.onUseVisibilityChange = () => {
+      if (document.hidden) this.resetUseButton();
+    };
+    this.onUseResize = () => {
+      this.resetUseButton();
+      this.positionUseButton();
+    };
+
+    this.useButton.on('pointerdown', this.onUsePointerDown);
+    this.input.on('pointerup', this.onUsePointerEnd);
+    this.input.on('pointerupoutside', this.onUsePointerEnd);
+    this.scale.on('resize', this.onUseResize);
+    window.addEventListener('pointerup', this.onUseWindowPointerEnd);
+    window.addEventListener('pointercancel', this.onUseWindowPointerEnd);
+    window.addEventListener('blur', this.onUseBlur);
+    document.addEventListener('visibilitychange', this.onUseVisibilityChange);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.cleanupSurvivalInterface, this);
+    this.events.once(Phaser.Scenes.Events.DESTROY, this.cleanupSurvivalInterface, this);
+    this.positionUseButton();
+  }
+
+  positionUseButton() {
+    const x = this.scale.gameSize.width - 176;
+    const y = this.scale.gameSize.height - 92;
+    this.useButton.setPosition(x, y);
+    this.useButtonLabel.setPosition(x, y);
+  }
+
+  resetUseButton() {
+    this.usePointerId = null;
+    this.useNativePointerId = null;
+    if (this.useButton && this.useButton.active) this.useButton.setScale(1);
+    if (this.useButtonLabel && this.useButtonLabel.active) this.useButtonLabel.setScale(1);
+  }
+
+  tryUseActiveItem() {
+    if (this.isDeathHandled || this.inventoryUI.isOpen) return false;
+    const slotIndex = this.inventoryUI.getActiveHotbarIndex();
+    const slot = this.inventoryModel.getSlot(slotIndex);
+    if (slot === null) {
+      this.showInteractionMessage('Слот пуст');
+      return false;
+    }
+
+    const item = ItemCatalog[slot.itemType];
+    if (!item || !item.consumable) {
+      this.showInteractionMessage('Этот предмет нельзя использовать');
+      return false;
+    }
+
+    const restored = this.playerStatsModel.restoreHunger(item.hungerRestore);
+    if (restored === 0) {
+      this.showInteractionMessage('Сытость уже полная');
+      return false;
+    }
+
+    const removed = this.inventoryModel.removeFromSlot(slotIndex, 1);
+    if (removed !== 1) {
+      throw new Error(`Не удалось удалить использованный предмет из слота ${slotIndex}.`);
+    }
+    this.inventoryUI.updateFromModel();
+    this.updateInventoryHud();
+    this.statusHUD.update(this.playerStatsModel.getHealth(), this.playerStatsModel.getHunger());
+    this.showInteractionMessage(`Съедено: ${item.displayName} +${restored}`);
+    return true;
+  }
+
+  handlePlayerDeath() {
+    if (this.isDeathHandled) return false;
+    this.isDeathHandled = true;
+    this.player.setVelocity(0, 0);
+    this.cancelInteractionHold();
+    if (this.virtualJoystick) this.virtualJoystick.reset();
+    this.resetActionButton();
+    this.resetUseButton();
+    if (this.inventoryUI && this.inventoryUI.isOpen) this.inventoryUI.closePanel();
+    this.targetMarker.setVisible(false);
+    this.useButton.setFillStyle(0x303840, 0.55);
+    this.useButton.setStrokeStyle(3, 0x77838c, 0.5);
+    this.deathText.setVisible(true);
+    return true;
+  }
+
+  cleanupSurvivalInterface() {
+    if (this.survivalCleanupDone) return;
+    this.survivalCleanupDone = true;
+    this.resetUseButton();
+    this.useButton.off('pointerdown', this.onUsePointerDown);
+    this.input.off('pointerup', this.onUsePointerEnd);
+    this.input.off('pointerupoutside', this.onUsePointerEnd);
+    this.scale.off('resize', this.onUseResize);
+    window.removeEventListener('pointerup', this.onUseWindowPointerEnd);
+    window.removeEventListener('pointercancel', this.onUseWindowPointerEnd);
+    window.removeEventListener('blur', this.onUseBlur);
+    document.removeEventListener('visibilitychange', this.onUseVisibilityChange);
+    this.events.off(Phaser.Scenes.Events.SHUTDOWN, this.cleanupSurvivalInterface, this);
+    this.events.off(Phaser.Scenes.Events.DESTROY, this.cleanupSurvivalInterface, this);
+    if (this.statusHUD) {
+      this.statusHUD.destroy();
+      this.statusHUD = null;
+    }
+    if (this.useButton && this.useButton.active) this.useButton.destroy();
+    if (this.useButtonLabel && this.useButtonLabel.active) this.useButtonLabel.destroy();
+    if (this.deathText && this.deathText.active) this.deathText.destroy();
+    this.useButton = null;
+    this.useButtonLabel = null;
+    this.deathText = null;
+    this.playerStatsModel = null;
+  }
+
   handleInventoryOpenChanged(isOpen) {
+    if (isOpen && this.isDeathHandled) {
+      this.inventoryUI.closePanel();
+      return;
+    }
     this.cancelInteractionHold();
     if (this.virtualJoystick) this.virtualJoystick.reset();
     this.resetActionButton();
     if (this.input.keyboard) this.input.keyboard.resetKeys();
     if (this.player && this.player.body) this.player.setVelocity(0, 0);
-    if (!isOpen) this.updateInteractionTarget();
+    this.resetUseButton();
+    if (!isOpen && !this.isDeathHandled) this.updateInteractionTarget();
   }
 
   updateInventoryHud() {
@@ -989,6 +1153,19 @@ class GameScene extends Phaser.Scene {
   }
 
   update(time, delta) {
+    if (this.survivalCleanupDone || !this.playerStatsModel) return;
+    const statsDelta = Math.min(Math.max(Number.isFinite(delta) ? delta : 0, 0), 250);
+    this.playerStatsModel.update(statsDelta);
+    this.statusHUD.update(
+      this.playerStatsModel.getHealth(),
+      this.playerStatsModel.getHunger()
+    );
+    if (this.playerStatsModel.isDead()) this.handlePlayerDeath();
+    if (this.isDeathHandled) {
+      this.player.setVelocity(0, 0);
+      return;
+    }
+
     if (this.inventoryUI && this.inventoryUI.isOpen) {
       this.player.setVelocity(0, 0);
       this.updateWorldDepth(this.player);
@@ -1016,6 +1193,10 @@ class GameScene extends Phaser.Scene {
     this.updateWorldDepth(this.player);
     this.collectNearbyGroundItems();
     this.updateInteractionTarget();
+
+    if (Phaser.Input.Keyboard.JustDown(this.useKey)) {
+      this.tryUseActiveItem();
+    }
 
     if (Phaser.Input.Keyboard.JustDown(this.interactKey)) {
       this.startInteractionHold('keyboard');

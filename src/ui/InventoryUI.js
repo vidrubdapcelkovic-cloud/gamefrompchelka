@@ -213,6 +213,10 @@ class InventoryUI {
     return true;
   }
 
+  getActiveHotbarIndex() {
+    return this.activeQuickSlotIndex;
+  }
+
   handleSlotPointerDown(index) {
     if (!this.isOpen) {
       if (index < 5) this.setActiveQuickSlot(index);

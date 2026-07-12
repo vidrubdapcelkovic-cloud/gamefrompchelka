@@ -12,7 +12,9 @@ const requiredRelativePaths = [
   'src/systems/InteractionSystem.js',
   'src/systems/HoldActionSystem.js',
   'src/systems/InventoryModel.js',
+  'src/systems/PlayerStatsModel.js',
   'src/systems/GroundItemSystem.js',
+  'src/ui/StatusHUD.js',
   'src/ui/InventoryUI.js',
   'src/VirtualJoystick.js',
   'src/GameScene.js',
@@ -47,7 +49,9 @@ const worldGrid = fs.readFileSync(requireFile('src/world/WorldGrid.js'), 'utf8')
 const interactionSystem = fs.readFileSync(requireFile('src/systems/InteractionSystem.js'), 'utf8');
 const holdActionSystem = fs.readFileSync(requireFile('src/systems/HoldActionSystem.js'), 'utf8');
 const inventoryModel = fs.readFileSync(requireFile('src/systems/InventoryModel.js'), 'utf8');
+const playerStatsModel = fs.readFileSync(requireFile('src/systems/PlayerStatsModel.js'), 'utf8');
 const groundItemSystem = fs.readFileSync(requireFile('src/systems/GroundItemSystem.js'), 'utf8');
+const statusHUD = fs.readFileSync(requireFile('src/ui/StatusHUD.js'), 'utf8');
 const inventoryUI = fs.readFileSync(requireFile('src/ui/InventoryUI.js'), 'utf8');
 const virtualJoystick = fs.readFileSync(requireFile('src/VirtualJoystick.js'), 'utf8');
 const gameScene = fs.readFileSync(requireFile('src/GameScene.js'), 'utf8');
@@ -84,7 +88,9 @@ ${safeScript(worldGrid)}
 ${safeScript(interactionSystem)}
 ${safeScript(holdActionSystem)}
 ${safeScript(inventoryModel)}
+${safeScript(playerStatsModel)}
 ${safeScript(groundItemSystem)}
+${safeScript(statusHUD)}
 ${safeScript(inventoryUI)}
 ${safeScript(virtualJoystick)}
 ${safeScript(gameScene)}
@@ -112,7 +118,9 @@ const pagesHtml = `<!doctype html>
     <script src="./src/systems/InteractionSystem.js"></script>
     <script src="./src/systems/HoldActionSystem.js"></script>
     <script src="./src/systems/InventoryModel.js"></script>
+    <script src="./src/systems/PlayerStatsModel.js"></script>
     <script src="./src/systems/GroundItemSystem.js"></script>
+    <script src="./src/ui/StatusHUD.js"></script>
     <script src="./src/ui/InventoryUI.js"></script>
     <script src="./src/VirtualJoystick.js"></script>
     <script src="./src/GameScene.js"></script>
@@ -152,7 +160,9 @@ fs.copyFileSync(requireFile('src/world/WorldGrid.js'), path.join(docsWorldDirect
 fs.copyFileSync(requireFile('src/systems/InteractionSystem.js'), path.join(docsSystemsDirectory, 'InteractionSystem.js'));
 fs.copyFileSync(requireFile('src/systems/HoldActionSystem.js'), path.join(docsSystemsDirectory, 'HoldActionSystem.js'));
 fs.copyFileSync(requireFile('src/systems/InventoryModel.js'), path.join(docsSystemsDirectory, 'InventoryModel.js'));
+fs.copyFileSync(requireFile('src/systems/PlayerStatsModel.js'), path.join(docsSystemsDirectory, 'PlayerStatsModel.js'));
 fs.copyFileSync(requireFile('src/systems/GroundItemSystem.js'), path.join(docsSystemsDirectory, 'GroundItemSystem.js'));
+fs.copyFileSync(requireFile('src/ui/StatusHUD.js'), path.join(docsUiDirectory, 'StatusHUD.js'));
 fs.copyFileSync(requireFile('src/ui/InventoryUI.js'), path.join(docsUiDirectory, 'InventoryUI.js'));
 fs.copyFileSync(requireFile('src/VirtualJoystick.js'), path.join(docsSrcDirectory, 'VirtualJoystick.js'));
 fs.copyFileSync(requireFile('src/GameScene.js'), path.join(docsSrcDirectory, 'GameScene.js'));

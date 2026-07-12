@@ -1,0 +1,57 @@
+const PLAYER_MAX_HEALTH = 100;
+const PLAYER_MAX_HUNGER = 100;
+const HUNGER_DRAIN_PER_SECOND = 0.1;
+const STARVATION_DAMAGE_PER_SECOND = 1;
+
+class PlayerStatsModel {
+  constructor() {
+    this.maxHealth = PLAYER_MAX_HEALTH;
+    this.maxHunger = PLAYER_MAX_HUNGER;
+    this.reset();
+  }
+
+  update(deltaMs) {
+    if (!Number.isFinite(deltaMs) || deltaMs < 0) {
+      throw new Error(`deltaMs должен быть конечным неотрицательным числом: ${deltaMs}.`);
+    }
+    if (this.health === 0 || deltaMs === 0) return;
+
+    const seconds = deltaMs / 1000;
+    const hungerBeforeUpdate = this.hunger;
+    this.hunger = Math.max(0, this.hunger - HUNGER_DRAIN_PER_SECOND * seconds);
+
+    let starvingSeconds = 0;
+    if (hungerBeforeUpdate === 0) {
+      starvingSeconds = seconds;
+    } else if (this.hunger === 0) {
+      starvingSeconds = Math.max(0, seconds - hungerBeforeUpdate / HUNGER_DRAIN_PER_SECOND);
+    }
+    this.health = Math.max(0, this.health - STARVATION_DAMAGE_PER_SECOND * starvingSeconds);
+  }
+
+  getHealth() {
+    return this.health;
+  }
+
+  getHunger() {
+    return this.hunger;
+  }
+
+  restoreHunger(amount) {
+    if (!Number.isFinite(amount) || amount < 0) {
+      throw new Error(`Восстановление голода должно быть конечным неотрицательным числом: ${amount}.`);
+    }
+    const restored = Math.min(amount, this.maxHunger - this.hunger);
+    this.hunger += restored;
+    return restored;
+  }
+
+  isDead() {
+    return this.health === 0;
+  }
+
+  reset() {
+    this.health = this.maxHealth;
+    this.hunger = this.maxHunger;
+  }
+}
