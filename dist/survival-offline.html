@@ -176,6 +176,50 @@ class WorldGrid {
   }
 }
 
+class InteractionSystem {
+  constructor(radius = 72) {
+    this.radius = radius;
+    this.radiusSquared = radius * radius;
+    this.targets = [];
+    this.currentTarget = null;
+  }
+
+  setTargets(targets) {
+    this.targets = targets.slice();
+    this.currentTarget = null;
+  }
+
+  update(playerX, playerY) {
+    let nearestTarget = null;
+    let nearestDistanceSquared = this.radiusSquared;
+
+    this.targets.forEach((target) => {
+      const offsetX = target.interactionX - playerX;
+      const offsetY = target.interactionY - playerY;
+      const distanceSquared = offsetX * offsetX + offsetY * offsetY;
+
+      if (distanceSquared > this.radiusSquared) return;
+
+      const isCloser = nearestTarget === null || distanceSquared < nearestDistanceSquared;
+      const hasStableTieBreak = nearestTarget !== null
+        && distanceSquared === nearestDistanceSquared
+        && target.id.localeCompare(nearestTarget.id) < 0;
+
+      if (isCloser || hasStableTieBreak) {
+        nearestTarget = target;
+        nearestDistanceSquared = distanceSquared;
+      }
+    });
+
+    this.currentTarget = nearestTarget;
+    return this.currentTarget;
+  }
+
+  getCurrentTarget() {
+    return this.currentTarget;
+  }
+}
+
 class VirtualJoystick {
   constructor(scene) {
     this.scene = scene;
@@ -344,6 +388,7 @@ class GameScene extends Phaser.Scene {
     this.createControls();
     this.createCamera();
     this.createInterface();
+    this.createInteractionInterface();
     this.createVirtualJoystick();
     this.registerLifecycleHandlers();
   }
@@ -567,6 +612,7 @@ class GameScene extends Phaser.Scene {
 
     this.worldObjects = [];
     this.treeBlockers = [];
+    this.interactionTargets = [];
     this.blockingWorldObjects = this.physics.add.staticGroup();
 
     FixedWorldObjects.forEach((objectData) => {
@@ -587,6 +633,9 @@ class GameScene extends Phaser.Scene {
       gameObject.setData('row', objectData.row);
       this.updateWorldDepth(gameObject);
 
+      let interactionX = gameObject.x;
+      let interactionY = gameObject.y;
+
       if (objectData.type === 'TREE') {
         const treeBounds = gameObject.getBounds();
         const blocker = this.blockingWorldObjects.create(
@@ -601,6 +650,8 @@ class GameScene extends Phaser.Scene {
         blocker.setData('col', objectData.col);
         blocker.setData('row', objectData.row);
         this.treeBlockers.push(blocker);
+        interactionX = blocker.x;
+        interactionY = blocker.y;
       } else if (objectData.type === 'ROCK') {
         gameObject.body.setSize(24, 18);
         gameObject.body.setOffset(4, 14);
@@ -608,9 +659,20 @@ class GameScene extends Phaser.Scene {
       }
 
       this.worldObjects.push(gameObject);
+      this.interactionTargets.push({
+        id: objectData.id,
+        type: objectData.type,
+        col: objectData.col,
+        row: objectData.row,
+        interactionX,
+        interactionY,
+        visualObject: gameObject
+      });
     });
 
     this.validateTreeBlockerGeometry();
+    this.interactionSystem = new InteractionSystem(72);
+    this.interactionSystem.setTargets(this.interactionTargets);
     this.worldObjectsCollider = this.physics.add.collider(
       this.player,
       this.blockingWorldObjects
@@ -792,10 +854,164 @@ class GameScene extends Phaser.Scene {
       left: Phaser.Input.Keyboard.KeyCodes.A,
       right: Phaser.Input.Keyboard.KeyCodes.D
     });
+    this.interactKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
   }
 
   createVirtualJoystick() {
     this.virtualJoystick = new VirtualJoystick(this);
+  }
+
+  createInteractionInterface() {
+    this.interactionCleanupDone = false;
+    this.actionPointerId = null;
+    this.actionNativePointerId = null;
+
+    this.targetMarker = this.add.circle(0, 0, 18, 0xffe16a, 0.18)
+      .setStrokeStyle(3, 0xfff2a8, 0.95)
+      .setDepth(INTERFACE_DEPTH - 10)
+      .setVisible(false);
+
+    this.actionButton = this.add.circle(0, 0, 36, 0x263642, 0.42)
+      .setStrokeStyle(3, 0xb9cbd6, 0.5)
+      .setScrollFactor(0)
+      .setDepth(INTERFACE_DEPTH)
+      .setInteractive();
+
+    this.actionButtonLabel = this.add.text(0, 0, 'E', {
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '30px',
+      fontStyle: 'bold',
+      color: '#b9cbd6'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 1);
+
+    this.interactionResultText = this.add.text(480, 148, '', {
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '24px',
+      color: '#fff4b0',
+      backgroundColor: '#17212bcc',
+      padding: { x: 14, y: 8 }
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH).setVisible(false);
+
+    this.hideInteractionMessage = () => {
+      this.interactionResultText.setVisible(false);
+      this.interactionMessageTimer.paused = true;
+    };
+    this.interactionMessageTimer = this.time.addEvent({
+      delay: 1000,
+      loop: true,
+      paused: true,
+      callback: this.hideInteractionMessage
+    });
+
+    this.onActionPointerDown = (pointer) => {
+      if (this.actionPointerId !== null || this.interactionSystem.getCurrentTarget() === null) return;
+
+      this.actionPointerId = pointer.id;
+      this.actionNativePointerId = pointer.event ? pointer.event.pointerId : null;
+      this.actionButton.setScale(0.92);
+      this.actionButtonLabel.setScale(0.92);
+      this.tryInteract();
+    };
+    this.onActionPointerEnd = (pointer) => {
+      if (pointer.id === this.actionPointerId) this.resetActionButton();
+    };
+    this.onActionPointerOut = (pointer) => {
+      if (pointer.id === this.actionPointerId) this.resetActionButton();
+    };
+    this.onActionWindowPointerEnd = (event) => {
+      if (event.pointerId === this.actionNativePointerId) this.resetActionButton();
+    };
+    this.onActionVisibilityChange = () => {
+      if (document.hidden) this.resetActionButton();
+    };
+    this.onActionBlur = () => this.resetActionButton();
+    this.onActionResize = () => {
+      this.resetActionButton();
+      this.positionActionButton();
+    };
+
+    this.actionButton.on('pointerdown', this.onActionPointerDown);
+    this.actionButton.on('pointerout', this.onActionPointerOut);
+    this.input.on('pointerup', this.onActionPointerEnd);
+    this.input.on('pointerupoutside', this.onActionPointerEnd);
+    this.scale.on('resize', this.onActionResize);
+    window.addEventListener('pointerup', this.onActionWindowPointerEnd);
+    window.addEventListener('pointercancel', this.onActionWindowPointerEnd);
+    window.addEventListener('blur', this.onActionBlur);
+    document.addEventListener('visibilitychange', this.onActionVisibilityChange);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.cleanupInteractionInterface, this);
+    this.events.once(Phaser.Scenes.Events.DESTROY, this.cleanupInteractionInterface, this);
+
+    this.positionActionButton();
+    this.updateInteractionTarget();
+  }
+
+  positionActionButton() {
+    const x = this.scale.gameSize.width - 92;
+    const y = this.scale.gameSize.height - 92;
+    this.actionButton.setPosition(x, y);
+    this.actionButtonLabel.setPosition(x, y);
+  }
+
+  updateInteractionTarget() {
+    const target = this.interactionSystem.update(this.player.x, this.player.y);
+    const hasTarget = target !== null;
+
+    if (hasTarget) {
+      this.targetMarker
+        .setPosition(target.interactionX, target.interactionY - 26)
+        .setVisible(true);
+    } else {
+      this.targetMarker.setVisible(false);
+      this.resetActionButton();
+    }
+
+    this.actionButton.setFillStyle(hasTarget ? 0x3f8f5b : 0x263642, hasTarget ? 0.82 : 0.42);
+    this.actionButton.setStrokeStyle(3, hasTarget ? 0xd9ffe3 : 0xb9cbd6, hasTarget ? 0.95 : 0.5);
+    this.actionButtonLabel.setColor(hasTarget ? '#ffffff' : '#b9cbd6');
+  }
+
+  tryInteract() {
+    const target = this.interactionSystem.getCurrentTarget();
+    if (target === null) return;
+
+    this.interactionResultText.setText(`${target.type}: ${target.id}`).setVisible(true);
+    this.interactionMessageTimer.reset({
+      delay: 1000,
+      loop: true,
+      paused: false,
+      callback: this.hideInteractionMessage
+    });
+  }
+
+  resetActionButton() {
+    this.actionPointerId = null;
+    this.actionNativePointerId = null;
+    if (this.actionButton) this.actionButton.setScale(1);
+    if (this.actionButtonLabel) this.actionButtonLabel.setScale(1);
+  }
+
+  cleanupInteractionInterface() {
+    if (this.interactionCleanupDone) return;
+    this.interactionCleanupDone = true;
+    this.resetActionButton();
+
+    this.actionButton.off('pointerdown', this.onActionPointerDown);
+    this.actionButton.off('pointerout', this.onActionPointerOut);
+    this.input.off('pointerup', this.onActionPointerEnd);
+    this.input.off('pointerupoutside', this.onActionPointerEnd);
+    this.scale.off('resize', this.onActionResize);
+    window.removeEventListener('pointerup', this.onActionWindowPointerEnd);
+    window.removeEventListener('pointercancel', this.onActionWindowPointerEnd);
+    window.removeEventListener('blur', this.onActionBlur);
+    document.removeEventListener('visibilitychange', this.onActionVisibilityChange);
+    this.events.off(Phaser.Scenes.Events.SHUTDOWN, this.cleanupInteractionInterface, this);
+    this.events.off(Phaser.Scenes.Events.DESTROY, this.cleanupInteractionInterface, this);
+
+    if (this.interactionMessageTimer) {
+      this.interactionMessageTimer.remove(false);
+      this.interactionMessageTimer = null;
+    }
   }
 
   registerLifecycleHandlers() {
@@ -905,6 +1121,11 @@ class GameScene extends Phaser.Scene {
 
     this.player.setVelocity(movement.x, movement.y);
     this.updateWorldDepth(this.player);
+    this.updateInteractionTarget();
+
+    if (Phaser.Input.Keyboard.JustDown(this.interactKey)) {
+      this.tryInteract();
+    }
   }
 }
 

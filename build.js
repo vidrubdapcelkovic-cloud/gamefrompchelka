@@ -8,6 +8,7 @@ const requiredRelativePaths = [
   'src/data/FixedMapData.js',
   'src/data/FixedWorldObjects.js',
   'src/world/WorldGrid.js',
+  'src/systems/InteractionSystem.js',
   'src/VirtualJoystick.js',
   'src/GameScene.js',
   'src/main.js'
@@ -37,6 +38,7 @@ const phaser = fs.readFileSync(requireFile('lib/phaser.min.js'), 'utf8');
 const fixedMapData = fs.readFileSync(requireFile('src/data/FixedMapData.js'), 'utf8');
 const fixedWorldObjects = fs.readFileSync(requireFile('src/data/FixedWorldObjects.js'), 'utf8');
 const worldGrid = fs.readFileSync(requireFile('src/world/WorldGrid.js'), 'utf8');
+const interactionSystem = fs.readFileSync(requireFile('src/systems/InteractionSystem.js'), 'utf8');
 const virtualJoystick = fs.readFileSync(requireFile('src/VirtualJoystick.js'), 'utf8');
 const gameScene = fs.readFileSync(requireFile('src/GameScene.js'), 'utf8');
 const main = fs.readFileSync(requireFile('src/main.js'), 'utf8');
@@ -68,6 +70,7 @@ ${safeScript(phaser)}
 ${safeScript(fixedMapData)}
 ${safeScript(fixedWorldObjects)}
 ${safeScript(worldGrid)}
+${safeScript(interactionSystem)}
 ${safeScript(virtualJoystick)}
 ${safeScript(gameScene)}
 ${safeScript(main)}
@@ -90,6 +93,7 @@ const pagesHtml = `<!doctype html>
     <script src="./src/data/FixedMapData.js"></script>
     <script src="./src/data/FixedWorldObjects.js"></script>
     <script src="./src/world/WorldGrid.js"></script>
+    <script src="./src/systems/InteractionSystem.js"></script>
     <script src="./src/VirtualJoystick.js"></script>
     <script src="./src/GameScene.js"></script>
     <script src="./src/main.js"></script>
@@ -107,11 +111,12 @@ const docsLibDirectory = path.join(docsDirectory, 'lib');
 const docsSrcDirectory = path.join(docsDirectory, 'src');
 const docsDataDirectory = path.join(docsSrcDirectory, 'data');
 const docsWorldDirectory = path.join(docsSrcDirectory, 'world');
+const docsSystemsDirectory = path.join(docsSrcDirectory, 'systems');
 const docsStylesDirectory = path.join(docsDirectory, 'styles');
 const assetDirectories = ['images', 'sprites', 'audio', 'maps', 'data']
   .map((name) => path.join(docsDirectory, 'assets', name));
 
-[docsDirectory, docsLibDirectory, docsSrcDirectory, docsDataDirectory, docsWorldDirectory, docsStylesDirectory, ...assetDirectories]
+[docsDirectory, docsLibDirectory, docsSrcDirectory, docsDataDirectory, docsWorldDirectory, docsSystemsDirectory, docsStylesDirectory, ...assetDirectories]
   .forEach(ensureDirectory);
 
 const pagesIndexPath = path.join(docsDirectory, 'index.html');
@@ -122,6 +127,7 @@ fs.copyFileSync(requireFile('lib/phaser.min.js'), path.join(docsLibDirectory, 'p
 fs.copyFileSync(requireFile('src/data/FixedMapData.js'), path.join(docsDataDirectory, 'FixedMapData.js'));
 fs.copyFileSync(requireFile('src/data/FixedWorldObjects.js'), path.join(docsDataDirectory, 'FixedWorldObjects.js'));
 fs.copyFileSync(requireFile('src/world/WorldGrid.js'), path.join(docsWorldDirectory, 'WorldGrid.js'));
+fs.copyFileSync(requireFile('src/systems/InteractionSystem.js'), path.join(docsSystemsDirectory, 'InteractionSystem.js'));
 fs.copyFileSync(requireFile('src/VirtualJoystick.js'), path.join(docsSrcDirectory, 'VirtualJoystick.js'));
 fs.copyFileSync(requireFile('src/GameScene.js'), path.join(docsSrcDirectory, 'GameScene.js'));
 fs.copyFileSync(requireFile('src/main.js'), path.join(docsSrcDirectory, 'main.js'));
