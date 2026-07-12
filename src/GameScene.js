@@ -1,6 +1,5 @@
 const PLAYER_SPEED = 260;
-const WORLD_WIDTH = 2000;
-const WORLD_HEIGHT = 1200;
+const SURFACE_TILE_INDICES = Object.freeze({ G: 0, S: 1, W: 2, R: 3 });
 
 class GameScene extends Phaser.Scene {
   constructor() {
@@ -18,18 +17,19 @@ class GameScene extends Phaser.Scene {
   }
 
   createWorld() {
-    this.physics.world.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+    this.worldGrid = new WorldGrid(FixedMapData);
+    this.physics.world.setBounds(0, 0, this.worldGrid.worldWidth, this.worldGrid.worldHeight);
 
     const graphics = this.add.graphics().setDepth(-20);
     graphics.fillStyle(0x527a45, 1);
-    graphics.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+    graphics.fillRect(0, 0, this.worldGrid.worldWidth, this.worldGrid.worldHeight);
 
     graphics.lineStyle(2, 0x5f8b50, 0.55);
-    for (let x = 0; x <= WORLD_WIDTH; x += 80) {
-      graphics.lineBetween(x, 0, x, WORLD_HEIGHT);
+    for (let x = 0; x <= this.worldGrid.worldWidth; x += 80) {
+      graphics.lineBetween(x, 0, x, this.worldGrid.worldHeight);
     }
-    for (let y = 0; y <= WORLD_HEIGHT; y += 80) {
-      graphics.lineBetween(0, y, WORLD_WIDTH, y);
+    for (let y = 0; y <= this.worldGrid.worldHeight; y += 80) {
+      graphics.lineBetween(0, y, this.worldGrid.worldWidth, y);
     }
 
     const decorations = [
@@ -58,9 +58,9 @@ class GameScene extends Phaser.Scene {
     });
 
     graphics.lineStyle(16, 0xe6c766, 1);
-    graphics.strokeRect(8, 8, WORLD_WIDTH - 16, WORLD_HEIGHT - 16);
+    graphics.strokeRect(8, 8, this.worldGrid.worldWidth - 16, this.worldGrid.worldHeight - 16);
     graphics.lineStyle(4, 0x3b2f21, 1);
-    graphics.strokeRect(18, 18, WORLD_WIDTH - 36, WORLD_HEIGHT - 36);
+    graphics.strokeRect(18, 18, this.worldGrid.worldWidth - 36, this.worldGrid.worldHeight - 36);
 
     this.createSurfaceTilemap();
   }
@@ -112,9 +112,8 @@ class GameScene extends Phaser.Scene {
       tiles.destroy();
     }
 
-    const tileIndices = { G: 0, S: 1, W: 2, R: 3 };
     const numericMap = FixedMapData.tiles.map((row) => (
-      Array.from(row, (tileType) => tileIndices[tileType])
+      Array.from(row, (tileType) => SURFACE_TILE_INDICES[tileType])
     ));
 
     this.surfaceMap = this.make.tilemap({
@@ -135,6 +134,60 @@ class GameScene extends Phaser.Scene {
 
     this.surfaceLayer = this.surfaceMap.createLayer(0, tileset, 0, 0);
     this.surfaceLayer.setDepth(-10);
+
+    const waterTileIndex = SURFACE_TILE_INDICES.W;
+    this.surfaceLayer.setCollision([waterTileIndex], true, true);
+    this.surfaceLayer.calculateFacesWithin(
+      0,
+      0,
+      FixedMapData.columns,
+      FixedMapData.rows
+    );
+    this.validateSurfaceCollision(waterTileIndex);
+  }
+
+  validateSurfaceCollision(waterTileIndex) {
+    const findFirstCell = (tileType) => {
+      for (let row = 0; row < FixedMapData.rows; row += 1) {
+        const col = FixedMapData.tiles[row].indexOf(tileType);
+        if (col !== -1) return { col, row };
+      }
+      return null;
+    };
+
+    const waterCell = findFirstCell('W');
+    const grassCell = findFirstCell('G');
+
+    if (waterCell === null || grassCell === null) {
+      throw new Error('Проверка коллизий карты невозможна: не найдена клетка W или G.');
+    }
+
+    const waterTile = this.surfaceLayer.getTileAt(waterCell.col, waterCell.row);
+    if (
+      waterTile === null
+      || waterTile.index !== waterTileIndex
+      || waterTile.collides !== true
+    ) {
+      throw new Error(
+        `Неверная коллизия клетки W (col: ${waterCell.col}, row: ${waterCell.row}, `
+        + `ожидался индекс: ${waterTileIndex}, фактический индекс: ${waterTile ? waterTile.index : 'нет тайла'}, `
+        + `collides: ${waterTile ? waterTile.collides : 'нет тайла'}).`
+      );
+    }
+
+    const grassTileIndex = SURFACE_TILE_INDICES.G;
+    const grassTile = this.surfaceLayer.getTileAt(grassCell.col, grassCell.row);
+    if (
+      grassTile === null
+      || grassTile.index !== grassTileIndex
+      || grassTile.collides !== false
+    ) {
+      throw new Error(
+        `Неверная коллизия клетки G (col: ${grassCell.col}, row: ${grassCell.row}, `
+        + `ожидался индекс: ${grassTileIndex}, фактический индекс: ${grassTile ? grassTile.index : 'нет тайла'}, `
+        + `collides: ${grassTile ? grassTile.collides : 'нет тайла'}).`
+      );
+    }
   }
 
   createPlayer() {
@@ -149,9 +202,30 @@ class GameScene extends Phaser.Scene {
     playerTexture.generateTexture('player', 40, 40);
     playerTexture.destroy();
 
-    this.player = this.physics.add.sprite(WORLD_WIDTH / 2, WORLD_HEIGHT / 2, 'player');
+    const { col, row } = FixedMapData.playerStart;
+
+    if (!this.worldGrid.isInside(col, row)) {
+      throw new Error(`Стартовая клетка игрока находится вне карты (col: ${col}, row: ${row}).`);
+    }
+
+    if (!this.worldGrid.isWalkable(col, row)) {
+      const tileType = this.worldGrid.getTileType(col, row);
+      throw new Error(
+        `Стартовая клетка игрока непроходима (col: ${col}, row: ${row}, тип: ${tileType ?? 'неизвестен'}).`
+      );
+    }
+
+    const startPosition = this.worldGrid.cellToWorldCenter(col, row);
+    if (startPosition === null) {
+      throw new Error(
+        `Не удалось преобразовать стартовую клетку игрока в координаты мира (col: ${col}, row: ${row}).`
+      );
+    }
+
+    this.player = this.physics.add.sprite(startPosition.x, startPosition.y, 'player');
     this.player.setCollideWorldBounds(true);
     this.player.body.setSize(40, 40);
+    this.playerMapCollider = this.physics.add.collider(this.player, this.surfaceLayer);
   }
 
   createControls() {
@@ -225,7 +299,7 @@ class GameScene extends Phaser.Scene {
 
   createCamera() {
     const camera = this.cameras.main;
-    camera.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+    camera.setBounds(0, 0, this.worldGrid.worldWidth, this.worldGrid.worldHeight);
     camera.startFollow(this.player, true, 0.09, 0.09);
     camera.setRoundPixels(true);
   }
