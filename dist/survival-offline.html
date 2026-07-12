@@ -311,7 +311,7 @@ class GameScene extends Phaser.Scene {
   createWorld() {
     this.physics.world.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
 
-    const graphics = this.add.graphics();
+    const graphics = this.add.graphics().setDepth(-20);
     graphics.fillStyle(0x527a45, 1);
     graphics.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
 
@@ -352,6 +352,80 @@ class GameScene extends Phaser.Scene {
     graphics.strokeRect(8, 8, WORLD_WIDTH - 16, WORLD_HEIGHT - 16);
     graphics.lineStyle(4, 0x3b2f21, 1);
     graphics.strokeRect(18, 18, WORLD_WIDTH - 36, WORLD_HEIGHT - 36);
+
+    this.createSurfaceTilemap();
+  }
+
+  createSurfaceTilemap() {
+    const textureKey = 'temporary-surface-tiles';
+    const tileSize = FixedMapData.tileSize;
+
+    if (!this.textures.exists(textureKey)) {
+      const tiles = this.make.graphics({ x: 0, y: 0, add: false });
+
+      // Grass tile (index 0).
+      tiles.fillStyle(0x527a45, 1);
+      tiles.fillRect(0, 0, tileSize, tileSize);
+      tiles.fillStyle(0x668d55, 1);
+      tiles.fillRect(5, 7, 3, 3);
+      tiles.fillRect(22, 19, 3, 3);
+      tiles.fillStyle(0x416a3b, 1);
+      tiles.fillRect(14, 25, 2, 4);
+
+      // Sand tile (index 1).
+      tiles.fillStyle(0xc9aa62, 1);
+      tiles.fillRect(tileSize, 0, tileSize, tileSize);
+      tiles.fillStyle(0xe0c47b, 1);
+      tiles.fillRect(tileSize + 6, 6, 4, 2);
+      tiles.fillRect(tileSize + 20, 23, 5, 2);
+      tiles.fillStyle(0xaa884c, 1);
+      tiles.fillRect(tileSize + 15, 14, 3, 3);
+
+      // Water tile (index 2).
+      tiles.fillStyle(0x2f6f9f, 1);
+      tiles.fillRect(tileSize * 2, 0, tileSize, tileSize);
+      tiles.fillStyle(0x4d91ba, 1);
+      tiles.fillRect(tileSize * 2 + 3, 7, 12, 3);
+      tiles.fillRect(tileSize * 2 + 17, 20, 12, 3);
+      tiles.fillStyle(0x23577f, 1);
+      tiles.fillRect(tileSize * 2 + 9, 27, 14, 2);
+
+      // Rocky ground tile (index 3).
+      tiles.fillStyle(0x696c70, 1);
+      tiles.fillRect(tileSize * 3, 0, tileSize, tileSize);
+      tiles.fillStyle(0x85898d, 1);
+      tiles.fillRect(tileSize * 3 + 4, 5, 8, 6);
+      tiles.fillRect(tileSize * 3 + 20, 19, 7, 8);
+      tiles.fillStyle(0x505358, 1);
+      tiles.fillRect(tileSize * 3 + 13, 14, 6, 5);
+
+      tiles.generateTexture(textureKey, tileSize * 4, tileSize);
+      tiles.destroy();
+    }
+
+    const tileIndices = { G: 0, S: 1, W: 2, R: 3 };
+    const numericMap = FixedMapData.tiles.map((row) => (
+      Array.from(row, (tileType) => tileIndices[tileType])
+    ));
+
+    this.surfaceMap = this.make.tilemap({
+      data: numericMap,
+      tileWidth: tileSize,
+      tileHeight: tileSize
+    });
+
+    const tileset = this.surfaceMap.addTilesetImage(
+      textureKey,
+      textureKey,
+      tileSize,
+      tileSize,
+      0,
+      0,
+      0
+    );
+
+    this.surfaceLayer = this.surfaceMap.createLayer(0, tileset, 0, 0);
+    this.surfaceLayer.setDepth(-10);
   }
 
   createPlayer() {
