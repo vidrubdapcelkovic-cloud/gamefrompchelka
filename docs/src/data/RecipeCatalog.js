@@ -25,5 +25,14 @@ const RecipeCatalog = Object.freeze({
       Object.freeze({ itemType: 'STONE', quantity: 2 })
     ]),
     result: Object.freeze({ itemType: 'STONE_SWORD', quantity: 1 })
+  }),
+  BOW: Object.freeze({
+    id: 'BOW',
+    displayName: 'Лук',
+    ingredients: Object.freeze([
+      Object.freeze({ itemType: 'WOOD', quantity: 3 }),
+      Object.freeze({ itemType: 'SLIME_GEL', quantity: 1 })
+    ]),
+    result: Object.freeze({ itemType: 'BOW', quantity: 1 })
   })
 });

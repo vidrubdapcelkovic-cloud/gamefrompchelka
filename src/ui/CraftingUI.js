@@ -24,10 +24,10 @@ class CraftingUI {
   }
 
   createPanel() {
-    this.panelBackground = this.scene.add.rectangle(480, 270, 460, 420, 0x0d141b, 0.96)
+    this.panelBackground = this.scene.add.rectangle(480, 270, 460, 480, 0x0d141b, 0.96)
       .setScrollFactor(0).setDepth(INTERFACE_DEPTH + 35)
       .setStrokeStyle(3, 0xbad5e8, 0.75).setInteractive();
-    this.panelTitle = this.scene.add.text(480, 92, 'Крафт', {
+    this.panelTitle = this.scene.add.text(480, 55, 'Крафт', {
       fontFamily: 'Arial, sans-serif', fontSize: '26px', fontStyle: 'bold', color: '#ffffff'
     }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 36);
     this.elements.push(this.panelBackground, this.panelTitle);
@@ -43,8 +43,8 @@ class CraftingUI {
       const recipe = RecipeCatalog[recipeId];
       const textureKey = this.textureKeys && this.textureKeys[recipe.result.itemType];
       if (!textureKey) throw new Error(`Нельзя отобразить результат крафта: ${recipe.result.itemType}.`);
-      const y = 160 + index * 76;
-      const background = this.scene.add.rectangle(480, y, 410, 62, 0x1b2731, 0.96)
+      const y = 115 + index * 72;
+      const background = this.scene.add.rectangle(480, y, 410, 58, 0x1b2731, 0.96)
         .setScrollFactor(0).setDepth(INTERFACE_DEPTH + 37)
         .setStrokeStyle(2, 0x78909f, 0.8).setInteractive();
       const ingredientsText = recipe.ingredients
@@ -75,10 +75,10 @@ class CraftingUI {
       this.interactivePanelElements.push(background);
     });
 
-    this.createButton = this.scene.add.rectangle(480, 420, 180, 48, 0x3f8f5b, 0.95)
+    this.createButton = this.scene.add.rectangle(480, 450, 180, 48, 0x3f8f5b, 0.95)
       .setScrollFactor(0).setDepth(INTERFACE_DEPTH + 37)
       .setStrokeStyle(2, 0xd9ffe3, 0.9).setInteractive();
-    this.createButtonText = this.scene.add.text(480, 420, 'Создать', {
+    this.createButtonText = this.scene.add.text(480, 450, 'Создать', {
       fontFamily: 'Arial, sans-serif', fontSize: '20px', fontStyle: 'bold', color: '#ffffff'
     }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 38);
     this.onCreatePointerDown = (pointer, localX, localY, event) => {

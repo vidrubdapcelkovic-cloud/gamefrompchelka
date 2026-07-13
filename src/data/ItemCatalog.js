@@ -43,5 +43,17 @@ const ItemCatalog = Object.freeze({
     category: 'WEAPON',
     consumable: false,
     attackDamage: 15
+  }),
+  BOW: Object.freeze({
+    id: 'BOW',
+    displayName: 'Лук',
+    maxStack: 1,
+    category: 'WEAPON',
+    consumable: false,
+    attackType: 'RANGED',
+    attackDamage: 10,
+    attackCooldownMs: 650,
+    projectileSpeed: 320,
+    projectileRange: 220
   })
 });

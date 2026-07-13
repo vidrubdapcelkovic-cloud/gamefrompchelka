@@ -18,7 +18,8 @@ const ITEM_TEXTURE_KEYS = Object.freeze({
   BERRIES: 'temporary-ground-berries',
   STONE_AXE: 'temporary-stone-axe',
   STONE_PICKAXE: 'temporary-stone-pickaxe',
-  STONE_SWORD: 'temporary-stone-sword'
+  STONE_SWORD: 'temporary-stone-sword',
+  BOW: 'temporary-bow'
 });
 const SLIME_SPAWN_CELLS = Object.freeze([
   Object.freeze({ col: 8, row: 8 }), Object.freeze({ col: 39, row: 8 }),
@@ -536,6 +537,16 @@ class GameScene extends Phaser.Scene {
       this.creatureSystem.group,
       this.blockingWorldObjects
     );
+    this.projectileSystem = new ProjectileSystem(this, {
+      textureKey: 'temporary-arrow',
+      surfaceLayer: this.surfaceLayer,
+      blockingGroup: this.blockingWorldObjects,
+      creatureGroup: this.creatureSystem.group,
+      depthScale: WORLD_DEPTH_SCALE,
+      onCreatureHit: (projectile, creatureSprite) => {
+        this.handleProjectileCreatureHit(projectile, creatureSprite);
+      }
+    });
   }
 
   createWorldObjectTextures() {
@@ -664,6 +675,25 @@ class GameScene extends Phaser.Scene {
         graphics.fillRect(5, 11, 11, 3);
         graphics.fillRect(8, 3, 5, 9);
         graphics.fillRect(9, 1, 3, 2);
+      }],
+      ['temporary-bow', 0x9a6336, (graphics) => {
+        graphics.lineStyle(3, 0x9a6336, 1);
+        graphics.beginPath();
+        graphics.arc(6, 10, 8, -Math.PI / 2, Math.PI / 2);
+        graphics.strokePath();
+        graphics.lineStyle(1, 0xe8dec5, 1);
+        graphics.lineBetween(6, 2, 6, 18);
+        graphics.lineStyle(2, 0xc8d0d6, 1);
+        graphics.lineBetween(4, 10, 17, 10);
+        graphics.fillStyle(0xc8d0d6, 1);
+        graphics.fillTriangle(17, 10, 13, 7, 13, 13);
+      }],
+      ['temporary-arrow', 0xc8d0d6, (graphics) => {
+        graphics.fillRect(2, 9, 15, 2);
+        graphics.fillTriangle(19, 10, 14, 6, 14, 14);
+        graphics.fillStyle(0x9a6336, 1);
+        graphics.fillTriangle(2, 10, 6, 6, 6, 10);
+        graphics.fillTriangle(2, 10, 6, 14, 6, 10);
       }]
     ];
 
@@ -1388,6 +1418,7 @@ class GameScene extends Phaser.Scene {
     if (this.input.keyboard) this.input.keyboard.resetKeys();
     this.resetBuildTogglePointer(); this.resetPlacePointer();
     this.player.setVelocity(0, 0); this.resetAttackButton(); this.resetUseButton();
+    if (this.projectileSystem) this.projectileSystem.clearProjectiles();
   }
 
   saveGame() {
@@ -1586,11 +1617,14 @@ class GameScene extends Phaser.Scene {
     else this.player.clearTint();
   }
 
-  getPlayerAttackDamage() {
+  getActiveHotbarItemDefinition() {
     const slotIndex = this.inventoryUI.getActiveHotbarIndex();
     const slot = this.inventoryModel.getSlot(slotIndex);
-    if (slot === null) return PLAYER_MELEE_ATTACK.damage;
-    const item = ItemCatalog[slot.itemType];
+    return slot === null ? null : ItemCatalog[slot.itemType] || null;
+  }
+
+  getPlayerAttackDamage() {
+    const item = this.getActiveHotbarItemDefinition();
     return item
       && item.category === 'WEAPON'
       && Number.isFinite(item.attackDamage)
@@ -1599,23 +1633,70 @@ class GameScene extends Phaser.Scene {
       : PLAYER_MELEE_ATTACK.damage;
   }
 
+  getFacingVector() {
+    const vectors = {
+      up: { x: 0, y: -1 },
+      down: { x: 0, y: 1 },
+      left: { x: -1, y: 0 },
+      right: { x: 1, y: 0 }
+    };
+    return vectors[this.lastFacingDirection] || vectors.down;
+  }
+
   tryPlayerAttack() {
     const time = this.getCombatTime();
-    if (!this.canAttack() || time - this.lastPlayerAttackTime < PLAYER_MELEE_ATTACK.cooldownMs) {
+    if (!this.canAttack()) return false;
+    const activeItem = this.getActiveHotbarItemDefinition();
+    const isBow = Boolean(activeItem && activeItem.attackType === 'RANGED');
+    const cooldownMs = isBow ? activeItem.attackCooldownMs : PLAYER_MELEE_ATTACK.cooldownMs;
+    if (time - this.lastPlayerAttackTime < cooldownMs) {
       return false;
     }
     this.lastPlayerAttackTime = time;
+    if (isBow) {
+      const direction = this.getFacingVector();
+      const spawnOffset = 24;
+      this.projectileSystem.spawn({
+        x: this.player.x + direction.x * spawnOffset,
+        y: this.player.y + direction.y * spawnOffset,
+        directionX: direction.x,
+        directionY: direction.y,
+        speed: activeItem.projectileSpeed,
+        range: activeItem.projectileRange,
+        damage: activeItem.attackDamage
+      });
+      return true;
+    }
+
     const target = this.creatureSystem.getNearestAttackable(
       this.player.x, this.player.y, PLAYER_MELEE_ATTACK.radius
     );
     if (!target) return true;
     const deathX = target.sprite.x;
     const deathY = target.sprite.y;
-    const creatureDefinition = CreatureCatalog[target.type];
-    const loot = creatureDefinition ? creatureDefinition.loot : null;
     const actualDamage = this.getPlayerAttackDamage();
     const result = this.creatureSystem.damage(target.id, actualDamage);
+    this.handleCreatureDamageResult(target, result, deathX, deathY);
+    return true;
+  }
+
+  handleProjectileCreatureHit(projectile, creatureSprite) {
+    if (!projectile || !creatureSprite || !this.creatureSystem) return false;
+    const target = this.creatureSystem.getCreatures().find(
+      (creature) => creature.active && creature.sprite === creatureSprite
+    );
+    if (!target) return false;
+    const deathX = target.sprite.x;
+    const deathY = target.sprite.y;
+    const result = this.creatureSystem.damage(target.id, projectile.damage);
+    this.handleCreatureDamageResult(target, result, deathX, deathY);
+    return result.damage > 0;
+  }
+
+  handleCreatureDamageResult(target, result, deathX, deathY) {
     if (result.damage > 0) {
+      const creatureDefinition = CreatureCatalog[target.type];
+      const loot = creatureDefinition ? creatureDefinition.loot : null;
       const displayName = creatureDefinition.displayName;
       if (result.died) {
         if (!loot || !ItemCatalog[loot.itemId]
@@ -1656,7 +1737,6 @@ class GameScene extends Phaser.Scene {
         : `Удар: ${displayName} -${result.damage}. Осталось ${result.health} HP`;
       this.showInteractionMessage(message);
     }
-    return true;
   }
 
   cleanupCombatInterface() {
@@ -1674,6 +1754,8 @@ class GameScene extends Phaser.Scene {
     document.removeEventListener('visibilitychange', this.onAttackVisibility);
     this.events.off(Phaser.Scenes.Events.SHUTDOWN, this.cleanupCombatInterface, this);
     this.events.off(Phaser.Scenes.Events.DESTROY, this.cleanupCombatInterface, this);
+    if (this.projectileSystem) this.projectileSystem.destroy();
+    this.projectileSystem = null;
     if (this.creatureMapCollider) this.creatureMapCollider.destroy();
     if (this.creatureObstacleCollider) this.creatureObstacleCollider.destroy();
     if (this.creatureSystem) this.creatureSystem.clear();
@@ -1973,6 +2055,7 @@ class GameScene extends Phaser.Scene {
   handlePlayerDeath() {
     if (this.isDeathHandled) return false;
     this.isDeathHandled = true;
+    if (this.projectileSystem) this.projectileSystem.clearProjectiles();
     this.resetPlayerCombatState();
     this.cancelInteractionHold();
     if (this.virtualJoystick) this.virtualJoystick.reset();
@@ -2099,6 +2182,7 @@ class GameScene extends Phaser.Scene {
   update(time, delta) {
     if (this.survivalCleanupDone || !this.playerStatsModel) return;
     if (this.isApplyingSave) return;
+    if (this.projectileSystem) this.projectileSystem.update();
     const statsDelta = Math.min(Math.max(Number.isFinite(delta) ? delta : 0, 0), 250);
     this.playerStatsModel.update(statsDelta);
     this.statusHUD.update(
