@@ -73,7 +73,8 @@ class GameScene extends Phaser.Scene {
   }
 
   canAttack() {
-    return this.canHarvest() && !(this.holdActionSystem && this.holdActionSystem.active);
+    return this.canHarvest()
+      && !(this.holdActionSystem && this.holdActionSystem.active);
   }
 
   canBuild() {
@@ -465,10 +466,7 @@ class GameScene extends Phaser.Scene {
   }
 
   createCreatureSystem() {
-    this.creatureSystem = new CreatureSystem(
-      this,
-      (damage) => this.playerStatsModel.takeDamage(damage)
-    );
+    this.creatureSystem = new CreatureSystem(this);
     SLIME_SPAWN_CELLS.forEach(({ col, row }) => {
       if (!this.worldGrid.isWalkable(col, row)
         || Array.from(this.runtimeWorldObjects.values()).some(
@@ -1336,7 +1334,8 @@ class GameScene extends Phaser.Scene {
     this.player.setVisible(true);
     this.player.body.enable = true;
     this.player.setPosition(position.x, position.y); this.player.body.reset(position.x, position.y);
-    this.player.setVelocity(0, 0);
+    this.resetPlayerCombatState();
+    this.creatureSystem.resetTransientState();
     this.cameras.main.startFollow(this.player, true, 0.09, 0.09);
     this.inventoryUI.setActiveQuickSlot(state.inventory.activeHotbarIndex);
     this.isDeathHandled = this.playerStatsModel.isDead();
@@ -1385,6 +1384,7 @@ class GameScene extends Phaser.Scene {
   createCombatInterface() {
     this.combatCleanupDone = false;
     this.lastPlayerAttackTime = -Infinity;
+    this.resetPlayerCombatState();
     this.attackPointerId = null;
     this.attackNativePointerId = null;
     this.attackButton = this.add.circle(0, 0, 30, 0x8b3f47, 0.9)
@@ -1402,7 +1402,7 @@ class GameScene extends Phaser.Scene {
       this.attackNativePointerId = pointer.event ? pointer.event.pointerId : null;
       this.attackButton.setScale(0.92);
       this.attackButtonLabel.setScale(0.92);
-      this.tryPlayerAttack(this.time.now);
+      this.tryPlayerAttack();
     };
     this.onAttackPointerEnd = (pointer) => {
       if (pointer.id === this.attackPointerId) this.resetAttackButton();
@@ -1436,7 +1436,39 @@ class GameScene extends Phaser.Scene {
     if (this.attackButtonLabel && this.attackButtonLabel.active) this.attackButtonLabel.setScale(1);
   }
 
-  tryPlayerAttack(time) {
+  getCombatTime() {
+    return this.time && Number.isFinite(this.time.now) ? this.time.now : 0;
+  }
+
+  resetPlayerCombatState() {
+    this.invulnerableUntil = 0;
+    this.playerHitFlashUntil = 0;
+    if (this.player && this.player.active) {
+      this.player.clearTint();
+      if (this.player.body) this.player.body.setVelocity(0, 0);
+    }
+  }
+
+  handleCreatureContactAttack(attack) {
+    const time = this.getCombatTime();
+    if (!attack || this.isPlayerDead() || time < this.invulnerableUntil) return false;
+    const damage = this.playerStatsModel.takeDamage(attack.damage);
+    if (damage <= 0) return false;
+    this.invulnerableUntil = time + CombatConfig.PLAYER.invulnerabilityMs;
+    this.playerHitFlashUntil = time + CombatConfig.PLAYER.flashMs;
+    this.player.setTint(0xffb5b5);
+    return true;
+  }
+
+  updatePlayerHitFlash() {
+    const time = this.getCombatTime();
+    if (!this.player || !this.player.active) return;
+    if (time < this.playerHitFlashUntil) this.player.setTint(0xffb5b5);
+    else this.player.clearTint();
+  }
+
+  tryPlayerAttack() {
+    const time = this.getCombatTime();
     if (!this.canAttack() || time - this.lastPlayerAttackTime < PLAYER_MELEE_ATTACK.cooldownMs) {
       return false;
     }
@@ -1445,9 +1477,13 @@ class GameScene extends Phaser.Scene {
       this.player.x, this.player.y, PLAYER_MELEE_ATTACK.radius
     );
     if (!target) return true;
-    const damage = this.creatureSystem.damage(target.id, PLAYER_MELEE_ATTACK.damage);
-    if (damage > 0) {
-      this.showInteractionMessage(`Удар: ${CreatureCatalog[target.type].displayName} -${damage}`);
+    const result = this.creatureSystem.damage(target.id, PLAYER_MELEE_ATTACK.damage);
+    if (result.damage > 0) {
+      const displayName = CreatureCatalog[target.type].displayName;
+      const message = result.died
+        ? `${displayName} побеждён`
+        : `Удар: ${displayName} -${result.damage}. Осталось ${result.health} HP`;
+      this.showInteractionMessage(message);
     }
     return true;
   }
@@ -1456,6 +1492,7 @@ class GameScene extends Phaser.Scene {
     if (this.combatCleanupDone) return;
     this.combatCleanupDone = true;
     this.resetAttackButton();
+    this.resetPlayerCombatState();
     this.attackButton.off('pointerdown', this.onAttackPointerDown);
     this.input.off('pointerup', this.onAttackPointerEnd);
     this.input.off('pointerupoutside', this.onAttackPointerEnd);
@@ -1764,7 +1801,7 @@ class GameScene extends Phaser.Scene {
   handlePlayerDeath() {
     if (this.isDeathHandled) return false;
     this.isDeathHandled = true;
-    this.player.setVelocity(0, 0);
+    this.resetPlayerCombatState();
     this.cancelInteractionHold();
     if (this.virtualJoystick) this.virtualJoystick.reset();
     this.resetActionButton();
@@ -1896,12 +1933,12 @@ class GameScene extends Phaser.Scene {
       this.playerStatsModel.getHealth(),
       this.playerStatsModel.getHunger()
     );
-    this.creatureSystem.update(
-      time,
+    const contactAttack = this.creatureSystem.update(
       statsDelta,
       this.player,
       this.playerStatsModel.isDead()
     );
+    this.handleCreatureContactAttack(contactAttack);
     this.statusHUD.update(
       this.playerStatsModel.getHealth(),
       this.playerStatsModel.getHunger()
@@ -1913,6 +1950,8 @@ class GameScene extends Phaser.Scene {
       this.player.setVelocity(0, 0);
       return;
     }
+
+    this.updatePlayerHitFlash();
 
     if (Phaser.Input.Keyboard.JustDown(this.buildToggleKey) && this.canBuild()) {
       this.toggleBuildMode();
@@ -1962,7 +2001,7 @@ class GameScene extends Phaser.Scene {
     }
     this.updateInteractionTarget();
 
-    if (Phaser.Input.Keyboard.JustDown(this.attackKey)) this.tryPlayerAttack(time);
+    if (Phaser.Input.Keyboard.JustDown(this.attackKey)) this.tryPlayerAttack();
 
     if (Phaser.Input.Keyboard.JustDown(this.useKey)) {
       this.tryUseActiveItem();

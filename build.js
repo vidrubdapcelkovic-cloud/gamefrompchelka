@@ -11,6 +11,7 @@ const requiredRelativePaths = [
   'src/data/RecipeCatalog.js',
   'src/data/BuildCatalog.js',
   'src/data/CreatureCatalog.js',
+  'src/data/CombatConfig.js',
   'src/world/WorldGrid.js',
   'src/systems/InteractionSystem.js',
   'src/systems/HoldActionSystem.js',
@@ -56,6 +57,7 @@ const itemCatalog = fs.readFileSync(requireFile('src/data/ItemCatalog.js'), 'utf
 const recipeCatalog = fs.readFileSync(requireFile('src/data/RecipeCatalog.js'), 'utf8');
 const buildCatalog = fs.readFileSync(requireFile('src/data/BuildCatalog.js'), 'utf8');
 const creatureCatalog = fs.readFileSync(requireFile('src/data/CreatureCatalog.js'), 'utf8');
+const combatConfig = fs.readFileSync(requireFile('src/data/CombatConfig.js'), 'utf8');
 const worldGrid = fs.readFileSync(requireFile('src/world/WorldGrid.js'), 'utf8');
 const interactionSystem = fs.readFileSync(requireFile('src/systems/InteractionSystem.js'), 'utf8');
 const holdActionSystem = fs.readFileSync(requireFile('src/systems/HoldActionSystem.js'), 'utf8');
@@ -103,6 +105,7 @@ ${safeScript(itemCatalog)}
 ${safeScript(recipeCatalog)}
 ${safeScript(buildCatalog)}
 ${safeScript(creatureCatalog)}
+${safeScript(combatConfig)}
 ${safeScript(worldGrid)}
 ${safeScript(interactionSystem)}
 ${safeScript(holdActionSystem)}
@@ -141,6 +144,7 @@ const pagesHtml = `<!doctype html>
     <script src="./src/data/RecipeCatalog.js"></script>
     <script src="./src/data/BuildCatalog.js"></script>
     <script src="./src/data/CreatureCatalog.js"></script>
+    <script src="./src/data/CombatConfig.js"></script>
     <script src="./src/world/WorldGrid.js"></script>
     <script src="./src/systems/InteractionSystem.js"></script>
     <script src="./src/systems/HoldActionSystem.js"></script>
@@ -191,6 +195,7 @@ fs.copyFileSync(requireFile('src/data/ItemCatalog.js'), path.join(docsDataDirect
 fs.copyFileSync(requireFile('src/data/RecipeCatalog.js'), path.join(docsDataDirectory, 'RecipeCatalog.js'));
 fs.copyFileSync(requireFile('src/data/BuildCatalog.js'), path.join(docsDataDirectory, 'BuildCatalog.js'));
 fs.copyFileSync(requireFile('src/data/CreatureCatalog.js'), path.join(docsDataDirectory, 'CreatureCatalog.js'));
+fs.copyFileSync(requireFile('src/data/CombatConfig.js'), path.join(docsDataDirectory, 'CombatConfig.js'));
 fs.copyFileSync(requireFile('src/world/WorldGrid.js'), path.join(docsWorldDirectory, 'WorldGrid.js'));
 fs.copyFileSync(requireFile('src/systems/InteractionSystem.js'), path.join(docsSystemsDirectory, 'InteractionSystem.js'));
 fs.copyFileSync(requireFile('src/systems/HoldActionSystem.js'), path.join(docsSystemsDirectory, 'HoldActionSystem.js'));

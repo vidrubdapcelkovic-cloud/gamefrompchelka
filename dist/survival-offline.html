@@ -204,6 +204,16 @@ const CreatureCatalog = Object.freeze({
   })
 });
 
+const CombatConfig = Object.freeze({
+  PLAYER: Object.freeze({
+    invulnerabilityMs: 650,
+    flashMs: 140
+  }),
+  SLIME: Object.freeze({
+    flashMs: 120
+  })
+});
+
 class WorldGrid {
   constructor(mapData = FixedMapData) {
     this.tileSize = mapData.tileSize;
@@ -730,9 +740,8 @@ class BuildingSystem {
 }
 
 class CreatureSystem {
-  constructor(scene, onContactDamage) {
+  constructor(scene) {
     this.scene = scene;
-    this.onContactDamage = onContactDamage;
     this.group = scene.physics.add.group();
     this.creatures = [];
     this.nextId = 1;
@@ -745,24 +754,49 @@ class CreatureSystem {
     sprite.body.setSize(24, 18);
     sprite.setCollideWorldBounds(true);
     const creature = {
-      id: stableId || `creature-${this.nextId++}`, type, health: definition.maxHealth,
-      state: 'idle', sprite, active: true, lastAttackTime: -Infinity,
-      spawnX: x, spawnY: y
+      id: stableId || `creature-${this.nextId++}`,
+      type,
+      health: definition.maxHealth,
+      state: 'idle',
+      sprite,
+      active: true,
+      lastAttackTime: -Infinity,
+      spawnX: x,
+      spawnY: y,
+      hitFlashUntil: 0
     };
     this.creatures.push(creature);
     return creature;
   }
 
-  update(time, delta, player, playerIsDead) {
+  getCombatTime() {
+    return this.scene.time && Number.isFinite(this.scene.time.now) ? this.scene.time.now : 0;
+  }
+
+  setCreatureVelocity(creature, velocityX, velocityY) {
+    const body = creature && creature.sprite && creature.sprite.body;
+    if (!creature.active || !creature.sprite.active || !body
+      || !body.enable || !body.moves) return false;
+    body.setVelocity(velocityX, velocityY);
+    return true;
+  }
+
+  update(delta, player, playerIsDead) {
+    const time = this.getCombatTime();
+    let readyAttacker = null;
+
     this.creatures.forEach((creature) => {
       if (!creature.active) return;
       const definition = CreatureCatalog[creature.type];
       const dx = player.x - creature.sprite.x;
       const dy = player.y - creature.sprite.y;
       const distance = Math.sqrt(dx * dx + dy * dy);
+
+      this.updateHitFlash(creature, time);
+
       if (playerIsDead) {
         creature.state = 'idle';
-        creature.sprite.setVelocity(0, 0);
+        this.setCreatureVelocity(creature, 0, 0);
       } else {
         if (creature.state === 'idle' && distance <= definition.detectionRadius) {
           creature.state = 'chase';
@@ -771,40 +805,82 @@ class CreatureSystem {
           creature.state = 'idle';
         }
         if (creature.state === 'chase' && distance <= definition.attackRange) {
-          creature.sprite.setVelocity(0, 0);
-          if (time - creature.lastAttackTime >= definition.attackCooldownMs) {
-            creature.lastAttackTime = time;
-            this.onContactDamage(definition.contactDamage);
+          this.setCreatureVelocity(creature, 0, 0);
+          if (time - creature.lastAttackTime >= definition.attackCooldownMs
+            && (readyAttacker === null || creature.id < readyAttacker.id)) {
+            readyAttacker = creature;
           }
         } else if (creature.state === 'chase' && distance > 0) {
-          creature.sprite.setVelocity(
+          this.setCreatureVelocity(
+            creature,
             dx / distance * definition.moveSpeed,
             dy / distance * definition.moveSpeed
           );
         } else {
-          creature.sprite.setVelocity(0, 0);
+          this.setCreatureVelocity(creature, 0, 0);
         }
       }
+
       creature.sprite.setDepth(
         (creature.sprite.y + creature.sprite.displayHeight / 2) * WORLD_DEPTH_SCALE
       );
     });
+
+    if (readyAttacker === null) return null;
+    readyAttacker.lastAttackTime = time;
+    return {
+      id: readyAttacker.id,
+      type: readyAttacker.type,
+      damage: CreatureCatalog[readyAttacker.type].contactDamage
+    };
+  }
+
+  updateHitFlash(creature, time) {
+    if (!creature.active || !creature.sprite || !creature.sprite.active) return;
+    if (time < creature.hitFlashUntil) creature.sprite.setTint(0xff8f8f);
+    else creature.sprite.clearTint();
   }
 
   damage(id, amount) {
     if (!Number.isFinite(amount) || amount <= 0) throw new Error(`Некорректный урон: ${amount}.`);
-    const creature = this.creatures.find((candidate) => candidate.id === id && candidate.active);
-    if (!creature) return 0;
+    const creature = this.creatures.find((candidate) => candidate.id === id);
+    if (!creature || !creature.active) {
+      return {
+        damage: 0,
+        health: creature ? Math.max(0, creature.health) : 0,
+        died: false
+      };
+    }
+
     const actualDamage = Math.min(amount, creature.health);
     creature.health -= actualDamage;
-    if (creature.health === 0) {
-      creature.active = false;
-      creature.state = 'dead';
-      creature.sprite.setVelocity(0, 0);
+    const died = creature.health === 0;
+
+    if (died) this.killCreature(creature);
+    else this.applyHitFlash(creature);
+
+    return { damage: actualDamage, health: creature.health, died };
+  }
+
+  killCreature(creature) {
+    if (!creature.active) return false;
+    creature.active = false;
+    creature.state = 'dead';
+    creature.hitFlashUntil = 0;
+    if (creature.sprite && creature.sprite.active) {
+      creature.sprite.clearTint();
+      if (creature.sprite.body) creature.sprite.body.setVelocity(0, 0);
       if (creature.sprite.body) creature.sprite.body.enable = false;
-      if (creature.sprite.active) creature.sprite.destroy();
+      creature.sprite.destroy();
     }
-    return actualDamage;
+    return true;
+  }
+
+  applyHitFlash(creature) {
+    if (!creature || !creature.active || !creature.sprite || !creature.sprite.active) return false;
+    creature.hitFlashUntil = this.getCombatTime() + CombatConfig.SLIME.flashMs;
+    creature.sprite.setTint(0xff8f8f);
+    return true;
   }
 
   getNearestAttackable(x, y, radius) {
@@ -826,7 +902,11 @@ class CreatureSystem {
     return this.creatures.slice();
   }
 
-  exportState() { return this.creatures.filter((c) => !c.active || c.state === 'dead').map((c) => c.id); }
+  exportState() {
+    return this.creatures.filter((creature) => !creature.active || creature.state === 'dead')
+      .map((creature) => creature.id);
+  }
+
   restoreState(deadCreatureIds) {
     if (!Array.isArray(deadCreatureIds) || deadCreatureIds.some((id) => typeof id !== 'string')
       || new Set(deadCreatureIds).size !== deadCreatureIds.length) return false;
@@ -835,18 +915,42 @@ class CreatureSystem {
       const definition = CreatureCatalog[creature.type];
       if (!creature.sprite || !creature.sprite.active) {
         creature.sprite = this.group.create(creature.spawnX, creature.spawnY, 'temporary-slime');
-        creature.sprite.body.setSize(24, 18); creature.sprite.setCollideWorldBounds(true);
-      } else creature.sprite.setPosition(creature.spawnX, creature.spawnY);
-      creature.health = definition.maxHealth; creature.active = true; creature.state = 'idle'; creature.lastAttackTime = -Infinity;
-      creature.sprite.body.enable = true; creature.sprite.setVisible(true); creature.sprite.setVelocity(0, 0);
+        creature.sprite.body.setSize(24, 18);
+        creature.sprite.setCollideWorldBounds(true);
+      } else {
+        creature.sprite.setPosition(creature.spawnX, creature.spawnY);
+      }
+      creature.health = definition.maxHealth;
+      creature.active = true;
+      creature.state = 'idle';
+      creature.lastAttackTime = -Infinity;
+      creature.sprite.body.enable = true;
+      creature.sprite.setVisible(true);
+      creature.sprite.setVelocity(0, 0);
+      creature.sprite.clearTint();
+      this.resetCreatureTransientState(creature);
       if (dead.has(creature.id)) this.damage(creature.id, definition.maxHealth);
     });
     return true;
   }
 
+  resetCreatureTransientState(creature) {
+    creature.hitFlashUntil = 0;
+    if (creature.sprite && creature.sprite.active) {
+      creature.sprite.clearTint();
+      if (creature.sprite.body) creature.sprite.body.setVelocity(0, 0);
+    }
+  }
+
+  resetTransientState() {
+    this.creatures.forEach((creature) => this.resetCreatureTransientState(creature));
+  }
+
   clear() {
+    this.resetTransientState();
     this.creatures.forEach((creature) => {
       if (creature.sprite && creature.sprite.active) creature.sprite.destroy();
+      creature.sprite = null;
       creature.active = false;
       creature.state = 'dead';
     });
@@ -1945,7 +2049,8 @@ class GameScene extends Phaser.Scene {
   }
 
   canAttack() {
-    return this.canHarvest() && !(this.holdActionSystem && this.holdActionSystem.active);
+    return this.canHarvest()
+      && !(this.holdActionSystem && this.holdActionSystem.active);
   }
 
   canBuild() {
@@ -2337,10 +2442,7 @@ class GameScene extends Phaser.Scene {
   }
 
   createCreatureSystem() {
-    this.creatureSystem = new CreatureSystem(
-      this,
-      (damage) => this.playerStatsModel.takeDamage(damage)
-    );
+    this.creatureSystem = new CreatureSystem(this);
     SLIME_SPAWN_CELLS.forEach(({ col, row }) => {
       if (!this.worldGrid.isWalkable(col, row)
         || Array.from(this.runtimeWorldObjects.values()).some(
@@ -3208,7 +3310,8 @@ class GameScene extends Phaser.Scene {
     this.player.setVisible(true);
     this.player.body.enable = true;
     this.player.setPosition(position.x, position.y); this.player.body.reset(position.x, position.y);
-    this.player.setVelocity(0, 0);
+    this.resetPlayerCombatState();
+    this.creatureSystem.resetTransientState();
     this.cameras.main.startFollow(this.player, true, 0.09, 0.09);
     this.inventoryUI.setActiveQuickSlot(state.inventory.activeHotbarIndex);
     this.isDeathHandled = this.playerStatsModel.isDead();
@@ -3257,6 +3360,7 @@ class GameScene extends Phaser.Scene {
   createCombatInterface() {
     this.combatCleanupDone = false;
     this.lastPlayerAttackTime = -Infinity;
+    this.resetPlayerCombatState();
     this.attackPointerId = null;
     this.attackNativePointerId = null;
     this.attackButton = this.add.circle(0, 0, 30, 0x8b3f47, 0.9)
@@ -3274,7 +3378,7 @@ class GameScene extends Phaser.Scene {
       this.attackNativePointerId = pointer.event ? pointer.event.pointerId : null;
       this.attackButton.setScale(0.92);
       this.attackButtonLabel.setScale(0.92);
-      this.tryPlayerAttack(this.time.now);
+      this.tryPlayerAttack();
     };
     this.onAttackPointerEnd = (pointer) => {
       if (pointer.id === this.attackPointerId) this.resetAttackButton();
@@ -3308,7 +3412,39 @@ class GameScene extends Phaser.Scene {
     if (this.attackButtonLabel && this.attackButtonLabel.active) this.attackButtonLabel.setScale(1);
   }
 
-  tryPlayerAttack(time) {
+  getCombatTime() {
+    return this.time && Number.isFinite(this.time.now) ? this.time.now : 0;
+  }
+
+  resetPlayerCombatState() {
+    this.invulnerableUntil = 0;
+    this.playerHitFlashUntil = 0;
+    if (this.player && this.player.active) {
+      this.player.clearTint();
+      if (this.player.body) this.player.body.setVelocity(0, 0);
+    }
+  }
+
+  handleCreatureContactAttack(attack) {
+    const time = this.getCombatTime();
+    if (!attack || this.isPlayerDead() || time < this.invulnerableUntil) return false;
+    const damage = this.playerStatsModel.takeDamage(attack.damage);
+    if (damage <= 0) return false;
+    this.invulnerableUntil = time + CombatConfig.PLAYER.invulnerabilityMs;
+    this.playerHitFlashUntil = time + CombatConfig.PLAYER.flashMs;
+    this.player.setTint(0xffb5b5);
+    return true;
+  }
+
+  updatePlayerHitFlash() {
+    const time = this.getCombatTime();
+    if (!this.player || !this.player.active) return;
+    if (time < this.playerHitFlashUntil) this.player.setTint(0xffb5b5);
+    else this.player.clearTint();
+  }
+
+  tryPlayerAttack() {
+    const time = this.getCombatTime();
     if (!this.canAttack() || time - this.lastPlayerAttackTime < PLAYER_MELEE_ATTACK.cooldownMs) {
       return false;
     }
@@ -3317,9 +3453,13 @@ class GameScene extends Phaser.Scene {
       this.player.x, this.player.y, PLAYER_MELEE_ATTACK.radius
     );
     if (!target) return true;
-    const damage = this.creatureSystem.damage(target.id, PLAYER_MELEE_ATTACK.damage);
-    if (damage > 0) {
-      this.showInteractionMessage(`Удар: ${CreatureCatalog[target.type].displayName} -${damage}`);
+    const result = this.creatureSystem.damage(target.id, PLAYER_MELEE_ATTACK.damage);
+    if (result.damage > 0) {
+      const displayName = CreatureCatalog[target.type].displayName;
+      const message = result.died
+        ? `${displayName} побеждён`
+        : `Удар: ${displayName} -${result.damage}. Осталось ${result.health} HP`;
+      this.showInteractionMessage(message);
     }
     return true;
   }
@@ -3328,6 +3468,7 @@ class GameScene extends Phaser.Scene {
     if (this.combatCleanupDone) return;
     this.combatCleanupDone = true;
     this.resetAttackButton();
+    this.resetPlayerCombatState();
     this.attackButton.off('pointerdown', this.onAttackPointerDown);
     this.input.off('pointerup', this.onAttackPointerEnd);
     this.input.off('pointerupoutside', this.onAttackPointerEnd);
@@ -3636,7 +3777,7 @@ class GameScene extends Phaser.Scene {
   handlePlayerDeath() {
     if (this.isDeathHandled) return false;
     this.isDeathHandled = true;
-    this.player.setVelocity(0, 0);
+    this.resetPlayerCombatState();
     this.cancelInteractionHold();
     if (this.virtualJoystick) this.virtualJoystick.reset();
     this.resetActionButton();
@@ -3768,12 +3909,12 @@ class GameScene extends Phaser.Scene {
       this.playerStatsModel.getHealth(),
       this.playerStatsModel.getHunger()
     );
-    this.creatureSystem.update(
-      time,
+    const contactAttack = this.creatureSystem.update(
       statsDelta,
       this.player,
       this.playerStatsModel.isDead()
     );
+    this.handleCreatureContactAttack(contactAttack);
     this.statusHUD.update(
       this.playerStatsModel.getHealth(),
       this.playerStatsModel.getHunger()
@@ -3785,6 +3926,8 @@ class GameScene extends Phaser.Scene {
       this.player.setVelocity(0, 0);
       return;
     }
+
+    this.updatePlayerHitFlash();
 
     if (Phaser.Input.Keyboard.JustDown(this.buildToggleKey) && this.canBuild()) {
       this.toggleBuildMode();
@@ -3834,7 +3977,7 @@ class GameScene extends Phaser.Scene {
     }
     this.updateInteractionTarget();
 
-    if (Phaser.Input.Keyboard.JustDown(this.attackKey)) this.tryPlayerAttack(time);
+    if (Phaser.Input.Keyboard.JustDown(this.attackKey)) this.tryPlayerAttack();
 
     if (Phaser.Input.Keyboard.JustDown(this.useKey)) {
       this.tryUseActiveItem();
