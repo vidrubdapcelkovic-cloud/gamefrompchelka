@@ -215,8 +215,6 @@ class CreatureSystem {
     });
     this.creatures = [];
     if (this.group) {
-      this.group.clear(false, false);
-      this.group.destroy();
       this.group = null;
     }
   }

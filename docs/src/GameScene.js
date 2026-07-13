@@ -466,14 +466,27 @@ class GameScene extends Phaser.Scene {
       this,
       this.worldGrid,
       this.blockingWorldObjects,
-      { WOOD_WALL: 'temporary-wood-wall' }
+      {
+        WOOD_WALL: 'temporary-wood-wall',
+        CAMPFIRE: 'temporary-campfire'
+      }
     );
     this.interactionTargetValidator = (target) => this.isInteractionTargetValid(target);
     this.refreshInteractionTargets();
   }
 
   isInteractionTargetValid(target) {
-    if (target.type !== 'WOOD_WALL') return true;
+    if (target.type !== 'WOOD_WALL' && target.type !== 'CAMPFIRE') return true;
+    const building = this.buildingSystem ? this.buildingSystem.getPlacement(target.id) : null;
+    if (building === null || target.building !== building || target.buildType !== building.buildType) {
+      return false;
+    }
+    if (target.type === 'CAMPFIRE' && (
+      this.isApplyingSave
+      || this.isPlayerDead()
+      || this.isModalOpen()
+      || this.buildingSystem.isActive()
+    )) return false;
     const facingVectors = {
       up: { x: 0, y: -1 },
       down: { x: 0, y: 1 },
@@ -611,6 +624,24 @@ class GameScene extends Phaser.Scene {
       wall.fillRect(22, 2, 3, 28);
       wall.generateTexture('temporary-wood-wall', 32, 32);
       wall.destroy();
+    }
+
+    if (!this.textures.exists('temporary-campfire')) {
+      const campfire = this.make.graphics({ x: 0, y: 0, add: false });
+      campfire.fillStyle(0x555b61, 1);
+      campfire.fillCircle(8, 24, 6);
+      campfire.fillCircle(16, 26, 6);
+      campfire.fillCircle(24, 24, 6);
+      campfire.fillStyle(0x8c613c, 1);
+      campfire.fillRect(7, 22, 19, 5);
+      campfire.fillStyle(0xe85d35, 1);
+      campfire.fillTriangle(16, 5, 8, 22, 24, 22);
+      campfire.fillStyle(0xffb53d, 1);
+      campfire.fillTriangle(16, 10, 12, 22, 20, 22);
+      campfire.fillStyle(0xffe06a, 1);
+      campfire.fillRect(15, 16, 3, 6);
+      campfire.generateTexture('temporary-campfire', 32, 32);
+      campfire.destroy();
     }
 
     if (!this.textures.exists('temporary-slime')) {
@@ -808,6 +839,7 @@ class GameScene extends Phaser.Scene {
     this.holdStartHotbarIndex = null;
     this.holdToolDisplayName = null;
     this.holdActionSystem = new HoldActionSystem();
+    this.lastCampfireHealTime = -Infinity;
 
     this.targetMarker = this.add.circle(0, 0, 18, 0xffe16a, 0.18)
       .setStrokeStyle(3, 0xfff2a8, 0.95)
@@ -840,6 +872,14 @@ class GameScene extends Phaser.Scene {
       fontStyle: 'bold',
       color: '#b9cbd6'
     }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 1);
+
+    this.interactionHintText = this.add.text(480, 500, '', {
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '16px',
+      color: '#ffffff',
+      backgroundColor: '#17212bcc',
+      padding: { x: 10, y: 6 }
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH).setVisible(false);
 
     this.interactionResultText = this.add.text(480, 148, '', {
       fontFamily: 'Arial, sans-serif',
@@ -927,6 +967,12 @@ class GameScene extends Phaser.Scene {
       this.targetMarker.setVisible(false);
     }
 
+    this.interactionHintText
+      .setText(target && target.type === 'CAMPFIRE'
+        ? 'Удерживайте E: отдохнуть у костра'
+        : '')
+      .setVisible(Boolean(target && target.type === 'CAMPFIRE'));
+
     this.actionButton.setFillStyle(hasTarget ? 0x3f8f5b : 0x263642, hasTarget ? 0.82 : 0.42);
     this.actionButton.setStrokeStyle(3, hasTarget ? 0xd9ffe3 : 0xb9cbd6, hasTarget ? 0.95 : 0.5);
     this.actionButtonLabel.setColor(hasTarget ? '#ffffff' : '#b9cbd6');
@@ -950,6 +996,13 @@ class GameScene extends Phaser.Scene {
 
   getInteractionHoldConfiguration(target) {
     const hotbarIndex = this.inventoryUI.getActiveHotbarIndex();
+    if (target.type === 'CAMPFIRE') {
+      return {
+        hotbarIndex,
+        durationOverride: BuildCatalog.CAMPFIRE.interactionDurationMs,
+        toolDisplayName: null
+      };
+    }
     if (target.type === 'WOOD_WALL') {
       return {
         hotbarIndex,
@@ -1029,6 +1082,10 @@ class GameScene extends Phaser.Scene {
   }
 
   completeInteraction(target) {
+    if (target.type === 'CAMPFIRE') {
+      this.completeCampfireRest(target);
+      return;
+    }
     if (target.type === 'WOOD_WALL') {
       this.completeBuildingDismantle(target);
       return;
@@ -1057,6 +1114,45 @@ class GameScene extends Phaser.Scene {
     const drop = WORLD_OBJECT_DROPS[runtimeObject.type];
     this.groundItemSystem.spawn(drop.itemType, drop.quantity, position.x, position.y);
     this.showInteractionMessage(`${drop.itemType} ×${drop.quantity}`);
+  }
+
+  completeCampfireRest(target) {
+    const building = this.buildingSystem.getPlacement(target.id);
+    const currentTarget = this.interactionSystem.getCurrentTarget();
+    if (building === null
+      || building.buildType !== 'CAMPFIRE'
+      || target.building !== building
+      || target.buildType !== building.buildType
+      || currentTarget === null
+      || currentTarget.id !== target.id
+      || !this.isInteractionTargetValid(target)
+      || this.isPlayerDead()) return false;
+
+    const definition = BuildCatalog.CAMPFIRE;
+    const healthBefore = this.playerStatsModel.getHealth();
+    if (healthBefore >= this.playerStatsModel.getMaxHealth()) {
+      this.showInteractionMessage('Здоровье уже полное');
+      return false;
+    }
+
+    const now = this.getCombatTime();
+    const remainingMs = definition.healCooldownMs - (now - this.lastCampfireHealTime);
+    if (remainingMs > 0) {
+      this.showInteractionMessage(
+        `Костёр ещё не готов. Осталось: ${Math.ceil(remainingMs / 1000)} сек.`
+      );
+      return false;
+    }
+
+    this.playerStatsModel.restoreHealth(definition.healAmount);
+    const healthAfter = this.playerStatsModel.getHealth();
+    const healed = healthAfter - healthBefore;
+    if (healed <= 0) return false;
+
+    this.lastCampfireHealTime = now;
+    this.statusHUD.update(healthAfter, this.playerStatsModel.getHunger());
+    this.showInteractionMessage(`Вы отдохнули у костра. Здоровье +${healed}`);
+    return true;
   }
 
   completeBuildingDismantle(target) {
@@ -1163,6 +1259,7 @@ class GameScene extends Phaser.Scene {
   cleanupInteractionInterface() {
     if (this.interactionCleanupDone) return;
     this.interactionCleanupDone = true;
+    this.lastCampfireHealTime = -Infinity;
     this.cancelInteractionHold();
     if (this.groundItemSystem) {
       this.groundItemSystem.clear();
@@ -1198,6 +1295,7 @@ class GameScene extends Phaser.Scene {
       this.interactionMessageTimer.remove(false);
       this.interactionMessageTimer = null;
     }
+    this.interactionHintText = null;
   }
 
   registerLifecycleHandlers() {
@@ -1411,6 +1509,7 @@ class GameScene extends Phaser.Scene {
 
   prepareForSaveOperation() {
     this.cancelInteractionHold(); this.exitBuildMode();
+    if (this.interactionHintText) this.interactionHintText.setVisible(false);
     if (this.inventoryUI.isOpen) this.inventoryUI.closePanel();
     if (this.craftingUI.isOpen) this.craftingUI.closePanel();
     this.inventoryUI.resetBackpackPointer(); this.craftingUI.resetPointer();
@@ -1485,6 +1584,7 @@ class GameScene extends Phaser.Scene {
     this.player.body.enable = true;
     this.player.setPosition(position.x, position.y); this.player.body.reset(position.x, position.y);
     this.resetPlayerCombatState();
+    this.lastCampfireHealTime = -Infinity;
     this.creatureSystem.resetTransientState();
     this.cameras.main.startFollow(this.player, true, 0.09, 0.09);
     this.inventoryUI.setActiveQuickSlot(state.inventory.activeHotbarIndex);
@@ -1774,6 +1874,8 @@ class GameScene extends Phaser.Scene {
     this.buildToggleNativePointerId = null;
     this.placePointerId = null;
     this.placeNativePointerId = null;
+    this.selectedBuildType = Object.keys(BuildCatalog)[0];
+    this.buildTypeControls = [];
 
     this.buildToggleButton = this.add.circle(0, 0, 28, 0x806039, 0.9)
       .setStrokeStyle(2, 0xf1d2a5, 0.85).setScrollFactor(0)
@@ -1788,6 +1890,31 @@ class GameScene extends Phaser.Scene {
     this.placeButtonLabel = this.add.text(0, 0, 'PLACE', {
       fontFamily: 'Arial, sans-serif', fontSize: '10px', fontStyle: 'bold', color: '#ffffff'
     }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 13).setVisible(false);
+
+    Object.keys(BuildCatalog).forEach((buildType) => {
+      const definition = BuildCatalog[buildType];
+      const costText = definition.cost
+        .map((cost) => `${cost.itemType} ×${cost.quantity}`)
+        .join(' + ');
+      const button = this.add.rectangle(0, 0, 132, 46, 0x3b4650, 0.94)
+        .setStrokeStyle(2, 0xa9bac7, 0.8)
+        .setScrollFactor(0)
+        .setDepth(INTERFACE_DEPTH + 12)
+        .setVisible(false)
+        .setInteractive();
+      button.disableInteractive();
+      const label = this.add.text(0, 0, `${definition.displayName}\n${costText}`, {
+        fontFamily: 'Arial, sans-serif', fontSize: '11px', fontStyle: 'bold', color: '#ffffff',
+        align: 'center', lineSpacing: 2
+      }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 13).setVisible(false);
+      const onPointerDown = (pointer, localX, localY, event) => {
+        if (event && event.stopPropagation) event.stopPropagation();
+        if (!this.buildingSystem.isActive()) return;
+        this.selectBuildType(buildType);
+      };
+      button.on('pointerdown', onPointerDown);
+      this.buildTypeControls.push({ buildType, button, label, onPointerDown });
+    });
 
     this.onBuildTogglePointerDown = (pointer, localX, localY, event) => {
       if (event && event.stopPropagation) event.stopPropagation();
@@ -1848,6 +1975,39 @@ class GameScene extends Phaser.Scene {
     this.buildToggleLabel.setPosition(width - 52, 192);
     this.placeButton.setPosition(width - 260, height - 92);
     this.placeButtonLabel.setPosition(width - 260, height - 92);
+    this.buildTypeControls.forEach((control, index) => {
+      const x = width - 360 + index * 145;
+      control.button.setPosition(x, 192);
+      control.label.setPosition(x, 192);
+    });
+  }
+
+  selectBuildType(buildType) {
+    if (!BuildCatalog[buildType] || !this.buildingSystem.isActive()) return false;
+    this.selectedBuildType = buildType;
+    this.buildingSystem.enterMode(buildType);
+    this.updateBuildTypeControls();
+    this.updateBuildingPreview();
+    return true;
+  }
+
+  setBuildTypeControlsVisible(visible) {
+    this.buildTypeControls.forEach((control) => {
+      control.button.setVisible(visible);
+      control.label.setVisible(visible);
+      if (visible) control.button.setInteractive();
+      else control.button.disableInteractive();
+    });
+    if (visible) this.updateBuildTypeControls();
+  }
+
+  updateBuildTypeControls() {
+    this.buildTypeControls.forEach((control) => {
+      const selected = control.buildType === this.selectedBuildType;
+      control.button
+        .setFillStyle(selected ? 0x806039 : 0x3b4650, 0.94)
+        .setStrokeStyle(selected ? 3 : 2, selected ? 0xffd28a : 0xa9bac7, 0.9);
+    });
   }
 
   resetBuildTogglePointer() {
@@ -1878,7 +2038,9 @@ class GameScene extends Phaser.Scene {
     this.resetUseButton();
     this.resetAttackButton();
     this.targetMarker.setVisible(false);
-    this.buildingSystem.enterMode('WOOD_WALL');
+    this.interactionHintText.setVisible(false);
+    this.buildingSystem.enterMode(this.selectedBuildType);
+    this.setBuildTypeControlsVisible(true);
     this.placeButton.setVisible(true);
     this.placeButton.setInteractive();
     this.placeButtonLabel.setVisible(true);
@@ -1893,6 +2055,7 @@ class GameScene extends Phaser.Scene {
     this.placeButton.setVisible(false);
     this.placeButton.disableInteractive();
     this.placeButtonLabel.setVisible(false);
+    this.setBuildTypeControlsVisible(false);
     this.resetPlacePointer();
     if (!this.buildingCleanupDone && this.canHarvest()) this.updateInteractionTarget();
   }
@@ -1916,7 +2079,8 @@ class GameScene extends Phaser.Scene {
   }
 
   validateBuildCell(target) {
-    const definition = BuildCatalog.WOOD_WALL;
+    const definition = BuildCatalog[this.buildingSystem.buildType];
+    if (!definition) return { valid: false, reason: 'invalidBuildType' };
     if (!target || !this.worldGrid.isInside(target.col, target.row)
       || !this.worldGrid.isWalkable(target.col, target.row)
       || this.worldGrid.getTileType(target.col, target.row) === 'W'
@@ -1956,21 +2120,39 @@ class GameScene extends Phaser.Scene {
     const validation = this.validateBuildCell(target);
     if (!validation.valid) {
       this.showInteractionMessage(
-        validation.reason === 'missingResources' ? 'Недостаточно дерева' : 'Здесь нельзя строить'
+        validation.reason === 'missingResources' ? 'Недостаточно ресурсов' : 'Здесь нельзя строить'
       );
       return false;
     }
-    const cost = BuildCatalog.WOOD_WALL.cost[0];
-    if (!this.inventoryModel.consumeItem(cost.itemType, cost.quantity)) {
-      this.showInteractionMessage('Недостаточно дерева');
-      return false;
+    const buildType = this.buildingSystem.buildType;
+    const definition = BuildCatalog[buildType];
+    const consumedCosts = [];
+    try {
+      definition.cost.forEach((cost) => {
+        if (!this.inventoryModel.consumeItem(cost.itemType, cost.quantity)) {
+          throw new Error(`Не удалось списать стоимость ${cost.itemType} ×${cost.quantity}.`);
+        }
+        consumedCosts.push(cost);
+      });
+    } catch (error) {
+      consumedCosts.forEach((cost) => {
+        const remainder = this.inventoryModel.addItem(cost.itemType, cost.quantity);
+        if (remainder !== 0) throw new Error(`Не удалось вернуть стоимость ${cost.itemType} ×${cost.quantity}.`);
+      });
+      throw error;
     }
     const placement = this.buildingSystem.place(target.col, target.row);
-    if (placement === null) throw new Error(`Не удалось разместить стену (${target.col}, ${target.row}).`);
+    if (placement === null) {
+      consumedCosts.forEach((cost) => {
+        const remainder = this.inventoryModel.addItem(cost.itemType, cost.quantity);
+        if (remainder !== 0) throw new Error(`Не удалось вернуть стоимость ${cost.itemType} ×${cost.quantity}.`);
+      });
+      throw new Error(`Не удалось разместить постройку ${buildType} (${target.col}, ${target.row}).`);
+    }
     this.refreshInteractionTargets();
     this.inventoryUI.updateFromModel();
     this.updateInventoryHud();
-    this.showInteractionMessage('Построено: Деревянная стена');
+    this.showInteractionMessage(`Построено: ${definition.displayName}`);
     this.updateBuildingPreview();
     return true;
   }
@@ -1983,6 +2165,9 @@ class GameScene extends Phaser.Scene {
     this.resetPlacePointer();
     this.buildToggleButton.off('pointerdown', this.onBuildTogglePointerDown);
     this.placeButton.off('pointerdown', this.onPlacePointerDown);
+    this.buildTypeControls.forEach((control) => {
+      control.button.off('pointerdown', control.onPointerDown);
+    });
     this.input.off('pointerup', this.onBuildingPointerEnd);
     this.input.off('pointerupoutside', this.onBuildingPointerEnd);
     this.scale.off('resize', this.onBuildingResize);
@@ -2000,6 +2185,11 @@ class GameScene extends Phaser.Scene {
       .forEach((element) => {
         if (element && element.active) element.destroy();
       });
+    this.buildTypeControls.forEach((control) => {
+      if (control.button && control.button.active) control.button.destroy();
+      if (control.label && control.label.active) control.label.destroy();
+    });
+    this.buildTypeControls = [];
     this.buildToggleButton = null;
     this.buildToggleLabel = null;
     this.placeButton = null;
@@ -2065,6 +2255,7 @@ class GameScene extends Phaser.Scene {
     if (this.inventoryUI && this.inventoryUI.isOpen) this.inventoryUI.closePanel();
     if (this.craftingUI && this.craftingUI.isOpen) this.craftingUI.closePanel();
     this.targetMarker.setVisible(false);
+    if (this.interactionHintText) this.interactionHintText.setVisible(false);
     this.updateDeathPresentation();
     return true;
   }
@@ -2139,7 +2330,10 @@ class GameScene extends Phaser.Scene {
     if (this.player && this.player.body) this.player.setVelocity(0, 0);
     this.resetUseButton();
     this.resetAttackButton();
-    if (isOpen) this.targetMarker.setVisible(false);
+    if (isOpen) {
+      this.targetMarker.setVisible(false);
+      if (this.interactionHintText) this.interactionHintText.setVisible(false);
+    }
     if (!isOpen && this.canHarvest()) {
       this.updateInteractionTarget();
     }

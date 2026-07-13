@@ -18,8 +18,10 @@ class BuildingSystem {
 
   enterMode(buildType) {
     if (!BuildCatalog[buildType]) throw new Error(`Неизвестный тип постройки: ${buildType}.`);
+    if (!this.textureKeys[buildType]) throw new Error(`Не задана текстура постройки: ${buildType}.`);
     this.active = true;
     this.buildType = buildType;
+    this.previewObject.setTexture(this.textureKeys[buildType]);
     return true;
   }
 

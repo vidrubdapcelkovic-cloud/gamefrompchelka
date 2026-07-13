@@ -124,7 +124,6 @@ class ProjectileSystem {
       projectile.processed = true;
       this.remove(projectile);
     });
-    if (this.group) this.group.clear(false, false);
   }
 
   getProjectiles() {
@@ -135,10 +134,10 @@ class ProjectileSystem {
     if (this.destroyed) return;
     this.destroyed = true;
     this.clearProjectiles();
-    if (this.surfaceCollider) this.surfaceCollider.destroy();
-    if (this.obstacleCollider) this.obstacleCollider.destroy();
-    if (this.creatureOverlap) this.creatureOverlap.destroy();
-    if (this.group) this.group.destroy();
+    if (this.surfaceCollider && this.surfaceCollider.world) this.surfaceCollider.destroy();
+    if (this.obstacleCollider && this.obstacleCollider.world) this.obstacleCollider.destroy();
+    if (this.creatureOverlap && this.creatureOverlap.world) this.creatureOverlap.destroy();
+    if (this.group && this.group.world && this.group.world.pendingDestroy) this.group.destroy();
     this.surfaceCollider = null;
     this.obstacleCollider = null;
     this.creatureOverlap = null;

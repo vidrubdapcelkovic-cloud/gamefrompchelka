@@ -37,6 +37,10 @@ class PlayerStatsModel {
     return this.hunger;
   }
 
+  getMaxHealth() {
+    return this.maxHealth;
+  }
+
   takeDamage(amount) {
     if (!Number.isFinite(amount) || amount <= 0) {
       throw new Error(`Урон должен быть конечным положительным числом: ${amount}.`);
@@ -44,6 +48,16 @@ class PlayerStatsModel {
     const actualDamage = Math.min(amount, this.health);
     this.health -= actualDamage;
     return actualDamage;
+  }
+
+  restoreHealth(amount) {
+    if (!Number.isFinite(amount) || amount < 0) {
+      throw new Error(`Восстановление здоровья должно быть конечным неотрицательным числом: ${amount}.`);
+    }
+    if (this.isDead()) return 0;
+    const restored = Math.min(amount, this.maxHealth - this.health);
+    this.health += restored;
+    return restored;
   }
 
   restoreHunger(amount) {
