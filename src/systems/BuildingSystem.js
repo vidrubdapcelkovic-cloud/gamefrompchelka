@@ -76,6 +76,25 @@ class BuildingSystem {
     return this.placements.filter((placement) => placement.active).slice();
   }
 
+  getPlacement(id) {
+    return this.placements.find(
+      (placement) => placement.active && placement.id === id
+    ) || null;
+  }
+
+  remove(id) {
+    const placement = this.getPlacement(id);
+    if (placement === null) return null;
+
+    placement.active = false;
+    this.occupiedCells.delete(`${placement.col},${placement.row}`);
+    if (placement.visualObject && placement.visualObject.active) {
+      placement.visualObject.destroy();
+    }
+    this.placements = this.placements.filter((candidate) => candidate !== placement);
+    return placement;
+  }
+
   exportState() { return this.getPlacements().map(({ buildType, col, row }) => ({ buildType, col, row })); }
   clearPlacements() {
     this.placements.forEach((p) => { if (p.visualObject && p.visualObject.active) p.visualObject.destroy(); p.active = false; });

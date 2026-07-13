@@ -18,11 +18,12 @@ class InteractionSystem {
     }
   }
 
-  update(playerX, playerY) {
+  update(playerX, playerY, targetValidator = null) {
     let nearestTarget = null;
     let nearestDistanceSquared = this.radiusSquared;
 
     this.targets.forEach((target) => {
+      if (targetValidator !== null && !targetValidator(target)) return;
       const offsetX = target.interactionX - playerX;
       const offsetY = target.interactionY - playerY;
       const distanceSquared = offsetX * offsetX + offsetY * offsetY;

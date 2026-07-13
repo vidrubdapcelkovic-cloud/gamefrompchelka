@@ -9,6 +9,7 @@ const WORLD_OBJECT_DROPS = Object.freeze({
 const WORLD_DEPTH_SCALE = 0.1;
 const INTERFACE_DEPTH = 2000;
 const GROUND_ITEM_PICKUP_RADIUS = 28;
+const BUILDING_DISMANTLE_DURATION_MS = 600;
 const PLAYER_MELEE_ATTACK = Object.freeze({ damage: 10, radius: 52, cooldownMs: 450 });
 const SLIME_SPAWN_CELLS = Object.freeze([
   Object.freeze({ col: 8, row: 8 }), Object.freeze({ col: 39, row: 8 }),
@@ -464,6 +465,56 @@ class GameScene extends Phaser.Scene {
       this.blockingWorldObjects,
       { WOOD_WALL: 'temporary-wood-wall' }
     );
+    this.interactionTargetValidator = (target) => this.isInteractionTargetValid(target);
+    this.refreshInteractionTargets();
+  }
+
+  isInteractionTargetValid(target) {
+    if (target.type !== 'WOOD_WALL') return true;
+    const facingVectors = {
+      up: { x: 0, y: -1 },
+      down: { x: 0, y: 1 },
+      left: { x: -1, y: 0 },
+      right: { x: 1, y: 0 }
+    };
+    const facing = facingVectors[this.lastFacingDirection];
+    if (!facing) return false;
+    const offsetX = target.interactionX - this.player.x;
+    const offsetY = target.interactionY - this.player.y;
+    return offsetX * facing.x + offsetY * facing.y > 0;
+  }
+
+  refreshInteractionTargets() {
+    const targets = [];
+    if (this.runtimeWorldObjects) {
+      this.runtimeWorldObjects.forEach((object) => {
+        if (object.active) targets.push(object.interactionTarget);
+      });
+    }
+    if (this.buildingSystem) {
+      this.buildingSystem.getPlacements().forEach((building) => {
+        const position = this.worldGrid.cellToWorldCenter(building.col, building.row);
+        if (position === null) {
+          throw new Error(
+            `Не удалось создать цель постройки ${building.id} `
+            + `(тип: ${building.buildType}, col: ${building.col}, row: ${building.row}).`
+          );
+        }
+        targets.push({
+          id: building.id,
+          type: building.buildType,
+          buildType: building.buildType,
+          col: building.col,
+          row: building.row,
+          interactionX: position.x,
+          interactionY: position.y,
+          visualObject: building.visualObject,
+          building
+        });
+      });
+    }
+    this.interactionTargets = targets;
+    this.interactionSystem.setTargets(targets);
   }
 
   createCreatureSystem() {
@@ -820,7 +871,11 @@ class GameScene extends Phaser.Scene {
   }
 
   updateInteractionTarget() {
-    const target = this.interactionSystem.update(this.player.x, this.player.y);
+    const target = this.interactionSystem.update(
+      this.player.x,
+      this.player.y,
+      this.interactionTargetValidator
+    );
     const hasTarget = target !== null;
 
     if (hasTarget) {
@@ -854,6 +909,13 @@ class GameScene extends Phaser.Scene {
 
   getInteractionHoldConfiguration(target) {
     const hotbarIndex = this.inventoryUI.getActiveHotbarIndex();
+    if (target.type === 'WOOD_WALL') {
+      return {
+        hotbarIndex,
+        durationOverride: BUILDING_DISMANTLE_DURATION_MS,
+        toolDisplayName: null
+      };
+    }
     const slot = this.inventoryModel.getSlot(hotbarIndex);
     const item = slot === null ? null : ItemCatalog[slot.itemType];
     const isEffectiveTool = Boolean(
@@ -926,6 +988,11 @@ class GameScene extends Phaser.Scene {
   }
 
   completeInteraction(target) {
+    if (target.type === 'WOOD_WALL') {
+      this.completeBuildingDismantle(target);
+      return;
+    }
+
     const runtimeObject = this.runtimeWorldObjects.get(target.id);
     if (!runtimeObject || !runtimeObject.active) return;
 
@@ -951,6 +1018,46 @@ class GameScene extends Phaser.Scene {
     this.showInteractionMessage(`${drop.itemType} ×${drop.quantity}`);
   }
 
+  completeBuildingDismantle(target) {
+    const building = this.buildingSystem.getPlacement(target.id);
+    if (building === null) return false;
+    if (target.building !== building || target.buildType !== building.buildType) {
+      throw new Error(`Цель постройки ${target.id} больше не соответствует активной постройке.`);
+    }
+
+    const definition = BuildCatalog[building.buildType];
+    const position = this.worldGrid.cellToWorldCenter(building.col, building.row);
+    if (!definition || position === null) {
+      throw new Error(
+        `Нельзя разобрать постройку ${building.id} `
+        + `(тип: ${building.buildType}, col: ${building.col}, row: ${building.row}).`
+      );
+    }
+    const refunds = definition.cost.map((ingredient) => ({
+      itemType: ingredient.itemType,
+      quantity: Math.ceil(ingredient.quantity * 0.5)
+    })).filter((refund) => refund.quantity > 0);
+
+    const removed = this.buildingSystem.remove(building.id);
+    if (removed === null) return false;
+    this.refreshInteractionTargets();
+    this.targetMarker.setVisible(false);
+    this.hideHoldProgress();
+    refunds.forEach((refund) => {
+      this.groundItemSystem.spawn(
+        refund.itemType,
+        refund.quantity,
+        position.x,
+        position.y
+      );
+    });
+    const refundText = refunds.map(
+      (refund) => `${refund.itemType} ×${refund.quantity}`
+    ).join(', ');
+    this.showInteractionMessage(`Разобрано: ${definition.displayName}. Возврат: ${refundText}`);
+    return true;
+  }
+
   setRuntimeWorldObjectActive(runtimeObject, active) {
     runtimeObject.active = active;
     if (runtimeObject.visualObject && runtimeObject.visualObject.active) {
@@ -966,13 +1073,10 @@ class GameScene extends Phaser.Scene {
 
   restoreRemovedWorldObjects(removedIds) {
     const removed = new Set(removedIds);
-    const targets = [];
     this.runtimeWorldObjects.forEach((object) => {
       this.setRuntimeWorldObjectActive(object, !removed.has(object.id));
-      if (object.active) targets.push(object.interactionTarget);
     });
-    this.interactionTargets = targets;
-    this.interactionSystem.setTargets(targets);
+    this.refreshInteractionTargets();
   }
 
   showInteractionMessage(message) {
@@ -1339,6 +1443,7 @@ class GameScene extends Phaser.Scene {
     if (!this.groundItemSystem.restoreState(state.world.groundItems)
       || !this.buildingSystem.restoreState(state.world.walls)
       || !this.creatureSystem.restoreState(state.world.deadCreatureIds)) throw new Error('Ошибка импорта сохранения.');
+    this.refreshInteractionTargets();
     const position = this.findSafePlayerPosition(state.player.x, state.player.y);
     this.player.setVisible(true);
     this.player.body.enable = true;
@@ -1761,6 +1866,7 @@ class GameScene extends Phaser.Scene {
     }
     const placement = this.buildingSystem.place(target.col, target.row);
     if (placement === null) throw new Error(`Не удалось разместить стену (${target.col}, ${target.row}).`);
+    this.refreshInteractionTargets();
     this.inventoryUI.updateFromModel();
     this.updateInventoryHud();
     this.showInteractionMessage('Построено: Деревянная стена');
