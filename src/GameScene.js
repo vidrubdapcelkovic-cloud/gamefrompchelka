@@ -325,6 +325,7 @@ class GameScene extends Phaser.Scene {
     this.groundItemSystem = new GroundItemSystem(this, {
       WOOD: 'temporary-ground-wood',
       STONE: 'temporary-ground-stone',
+      SLIME_GEL: 'temporary-slime-gel',
       BERRIES: 'temporary-ground-berries',
       STONE_AXE: 'temporary-stone-axe',
       STONE_PICKAXE: 'temporary-stone-pickaxe'
@@ -574,6 +575,13 @@ class GameScene extends Phaser.Scene {
         graphics.fillRoundedRect(2, 4, 16, 13, 5);
         graphics.fillStyle(0xa8b0b7, 1);
         graphics.fillRect(6, 5, 7, 3);
+      }],
+      ['temporary-slime-gel', 0x63c76a, (graphics) => {
+        graphics.fillRoundedRect(2, 7, 16, 11, 5);
+        graphics.fillStyle(0x9be889, 1);
+        graphics.fillRect(6, 6, 7, 4);
+        graphics.fillStyle(0xd2ffc0, 1);
+        graphics.fillRect(6, 9, 3, 3);
       }],
       ['temporary-ground-berries', 0xc53f57, (graphics) => {
         graphics.fillCircle(6, 10, 5);
@@ -1150,6 +1158,7 @@ class GameScene extends Phaser.Scene {
       {
         WOOD: 'temporary-ground-wood',
         STONE: 'temporary-ground-stone',
+        SLIME_GEL: 'temporary-slime-gel',
         BERRIES: 'temporary-ground-berries',
         STONE_AXE: 'temporary-stone-axe',
         STONE_PICKAXE: 'temporary-stone-pickaxe'
@@ -1477,9 +1486,47 @@ class GameScene extends Phaser.Scene {
       this.player.x, this.player.y, PLAYER_MELEE_ATTACK.radius
     );
     if (!target) return true;
+    const deathX = target.sprite.x;
+    const deathY = target.sprite.y;
+    const creatureDefinition = CreatureCatalog[target.type];
+    const loot = creatureDefinition ? creatureDefinition.loot : null;
     const result = this.creatureSystem.damage(target.id, PLAYER_MELEE_ATTACK.damage);
     if (result.damage > 0) {
-      const displayName = CreatureCatalog[target.type].displayName;
+      const displayName = creatureDefinition.displayName;
+      if (result.died) {
+        if (!loot || !ItemCatalog[loot.itemId]
+          || !Number.isInteger(loot.minQuantity) || !Number.isInteger(loot.maxQuantity)
+          || loot.minQuantity <= 0 || loot.maxQuantity < loot.minQuantity) {
+          throw new Error(`Некорректная конфигурация лута существа: ${target.type}.`);
+        }
+        const quantity = Phaser.Math.Between(loot.minQuantity, loot.maxQuantity);
+        const groundItemsBefore = this.groundItemSystem.getItems().length;
+        const droppedItem = this.groundItemSystem.spawn(
+          loot.itemId,
+          quantity,
+          deathX,
+          deathY
+        );
+        const groundItemsAfter = this.groundItemSystem.getItems();
+        const textureKey = this.groundItemSystem.textureKeys[loot.itemId];
+        const dropIsValid = groundItemsAfter.length === groundItemsBefore + 1
+          && groundItemsAfter.includes(droppedItem)
+          && droppedItem.itemType === loot.itemId
+          && droppedItem.quantity === quantity
+          && droppedItem.x === deathX
+          && droppedItem.y === deathY
+          && droppedItem.visualObject
+          && droppedItem.visualObject.active
+          && droppedItem.visualObject.visible
+          && droppedItem.visualObject.alpha > 0
+          && droppedItem.visualObject.texture.key === textureKey
+          && this.textures.exists(textureKey);
+        if (!dropIsValid) {
+          throw new Error(
+            `Не удалось создать лут ${loot.itemId} ×${quantity} в (${deathX}, ${deathY}).`
+          );
+        }
+      }
       const message = result.died
         ? `${displayName} побеждён`
         : `Удар: ${displayName} -${result.damage}. Осталось ${result.health} HP`;

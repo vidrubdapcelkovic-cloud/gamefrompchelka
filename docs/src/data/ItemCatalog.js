@@ -5,6 +5,9 @@ const ItemCatalog = Object.freeze({
   STONE: Object.freeze({
     id: 'STONE', displayName: 'Камень', maxStack: 99, category: 'RESOURCE', consumable: false
   }),
+  SLIME_GEL: Object.freeze({
+    id: 'SLIME_GEL', displayName: 'Слизь', maxStack: 99, category: 'RESOURCE', consumable: false
+  }),
   BERRIES: Object.freeze({
     id: 'BERRIES',
     displayName: 'Ягоды',
