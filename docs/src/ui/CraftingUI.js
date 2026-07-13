@@ -1,9 +1,10 @@
 class CraftingUI {
-  constructor(scene, craftingModel, onOpenChanged, onCraftResult) {
+  constructor(scene, craftingModel, onOpenChanged, onCraftResult, canOpenPanel) {
     this.scene = scene;
     this.craftingModel = craftingModel;
     this.onOpenChanged = onOpenChanged;
     this.onCraftResult = onCraftResult;
+    this.canOpenPanel = canOpenPanel || (() => true);
     this.recipeIds = Object.keys(RecipeCatalog);
     this.selectedRecipeId = this.recipeIds[0];
     this.isOpen = false;
@@ -167,7 +168,7 @@ class CraftingUI {
   }
 
   openPanel() {
-    if (this.isOpen) return;
+    if (this.isOpen || !this.canOpenPanel()) return;
     this.isOpen = true;
     this.setPanelVisible(true);
     this.onOpenChanged(true);

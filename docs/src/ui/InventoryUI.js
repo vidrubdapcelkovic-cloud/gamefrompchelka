@@ -1,9 +1,11 @@
 class InventoryUI {
-  constructor(scene, inventoryModel, textureKeys, onOpenChanged) {
+  constructor(scene, inventoryModel, textureKeys, onOpenChanged, canOpenPanel, canSelectQuickSlot) {
     this.scene = scene;
     this.inventoryModel = inventoryModel;
     this.textureKeys = textureKeys;
     this.onOpenChanged = onOpenChanged;
+    this.canOpenPanel = canOpenPanel || (() => true);
+    this.canSelectQuickSlot = canSelectQuickSlot || (() => true);
     this.activeQuickSlotIndex = 0;
     this.selectedSourceIndex = null;
     this.isOpen = false;
@@ -103,7 +105,9 @@ class InventoryUI {
 
   registerHandlers() {
     this.onQuickKey = (index) => (event) => {
-      if (!event || !event.repeat) this.setActiveQuickSlot(index);
+      if ((!event || !event.repeat) && this.canSelectQuickSlot()) {
+        this.setActiveQuickSlot(index);
+      }
     };
     this.quickKeyHandlers = [0, 1, 2, 3, 4].map((index) => this.onQuickKey(index));
     ['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE'].forEach((keyName, index) => {
@@ -160,7 +164,7 @@ class InventoryUI {
   reposition() {
     const width = this.scene.scale.gameSize.width;
     const height = this.scene.scale.gameSize.height;
-    const quickStartX = width / 2 - 104;
+    const quickStartX = width / 2 - 112;
     this.quickSlots.forEach((slot, index) => {
       const x = quickStartX + index * 52;
       const y = height - 34;
@@ -219,7 +223,7 @@ class InventoryUI {
 
   handleSlotPointerDown(index) {
     if (!this.isOpen) {
-      if (index < 5) this.setActiveQuickSlot(index);
+      if (index < 5 && this.canSelectQuickSlot()) this.setActiveQuickSlot(index);
       return;
     }
 
@@ -266,7 +270,7 @@ class InventoryUI {
   }
 
   openPanel() {
-    if (this.isOpen) return;
+    if (this.isOpen || !this.canOpenPanel()) return;
     this.isOpen = true;
     this.updateFromModel();
     this.setPanelVisible(true);

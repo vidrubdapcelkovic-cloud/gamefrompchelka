@@ -46,6 +46,58 @@ class GameScene extends Phaser.Scene {
     this.registerLifecycleHandlers();
   }
 
+  isPlayerDead() {
+    return Boolean(
+      this.isDeathHandled
+      || (this.playerStatsModel && this.playerStatsModel.isDead())
+    );
+  }
+
+  isModalOpen() {
+    return Boolean(
+      (this.inventoryUI && this.inventoryUI.isOpen)
+      || (this.craftingUI && this.craftingUI.isOpen)
+    );
+  }
+
+  canMove() {
+    return !this.isApplyingSave && !this.isPlayerDead() && !this.isModalOpen();
+  }
+
+  canHarvest() {
+    return this.canMove() && !(this.buildingSystem && this.buildingSystem.isActive());
+  }
+
+  canUseFood() {
+    return this.canHarvest() && !(this.holdActionSystem && this.holdActionSystem.active);
+  }
+
+  canAttack() {
+    return this.canHarvest() && !(this.holdActionSystem && this.holdActionSystem.active);
+  }
+
+  canBuild() {
+    return !this.isApplyingSave && !this.isPlayerDead();
+  }
+
+  canOpenPanel() {
+    return !this.isApplyingSave
+      && !this.isPlayerDead()
+      && !(this.buildingSystem && this.buildingSystem.isActive());
+  }
+
+  canSelectHotbarSlot() {
+    return !this.isApplyingSave && !this.isPlayerDead();
+  }
+
+  canSave() {
+    return !this.isApplyingSave && !this.isPlayerDead();
+  }
+
+  canLoad() {
+    return !this.isApplyingSave;
+  }
+
   createWorld() {
     this.worldGrid = new WorldGrid(FixedMapData);
     this.physics.world.setBounds(0, 0, this.worldGrid.worldWidth, this.worldGrid.worldHeight);
@@ -643,6 +695,7 @@ class GameScene extends Phaser.Scene {
     this.attackKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
     this.saveKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.K);
     this.loadKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.L);
+    this.movementVector = new Phaser.Math.Vector2();
   }
 
   createVirtualJoystick() {
@@ -710,9 +763,7 @@ class GameScene extends Phaser.Scene {
     });
 
     this.onActionPointerDown = (pointer) => {
-      if (this.isDeathHandled) return;
-      if (this.buildingSystem && this.buildingSystem.isActive()) return;
-      if (this.isBlockingPanelOpen()) return;
+      if (!this.canHarvest()) return;
       if (this.actionPointerId !== null || this.interactionSystem.getCurrentTarget() === null) return;
 
       this.actionPointerId = pointer.id;
@@ -780,9 +831,7 @@ class GameScene extends Phaser.Scene {
   }
 
   startInteractionHold(source) {
-    if (this.isDeathHandled) return false;
-    if (this.buildingSystem && this.buildingSystem.isActive()) return false;
-    if (this.isBlockingPanelOpen()) return false;
+    if (!this.canHarvest()) return false;
     const target = this.interactionSystem.getCurrentTarget();
     if (target === null || this.holdInputSource !== null) return false;
 
@@ -973,6 +1022,14 @@ class GameScene extends Phaser.Scene {
       this.inventoryModel.clear();
       if (this.inventoryUI && !this.inventoryUI.destroyed) this.inventoryUI.updateFromModel();
     }
+    if (this.playerMapCollider) {
+      this.playerMapCollider.destroy();
+      this.playerMapCollider = null;
+    }
+    if (this.worldObjectsCollider) {
+      this.worldObjectsCollider.destroy();
+      this.worldObjectsCollider = null;
+    }
 
     this.actionButton.off('pointerdown', this.onActionPointerDown);
     this.actionButton.off('pointerout', this.onActionPointerOut);
@@ -1099,7 +1156,9 @@ class GameScene extends Phaser.Scene {
         STONE_AXE: 'temporary-stone-axe',
         STONE_PICKAXE: 'temporary-stone-pickaxe'
       },
-      (isOpen) => this.handleInventoryOpenChanged(isOpen)
+      (isOpen) => this.handleInventoryOpenChanged(isOpen),
+      () => this.canOpenPanel(),
+      () => this.canSelectHotbarSlot()
     );
   }
 
@@ -1108,15 +1167,13 @@ class GameScene extends Phaser.Scene {
       this,
       this.craftingModel,
       (isOpen) => this.handleCraftingOpenChanged(isOpen),
-      (result, recipe) => this.handleCraftResult(result, recipe)
+      (result, recipe) => this.handleCraftResult(result, recipe),
+      () => this.canOpenPanel()
     );
   }
 
   isBlockingPanelOpen() {
-    return Boolean(
-      (this.inventoryUI && this.inventoryUI.isOpen)
-      || (this.craftingUI && this.craftingUI.isOpen)
-    );
+    return this.isModalOpen();
   }
 
   handleCraftResult(result, recipe) {
@@ -1160,8 +1217,7 @@ class GameScene extends Phaser.Scene {
 
     this.onUsePointerDown = (pointer, localX, localY, event) => {
       if (event && event.stopPropagation) event.stopPropagation();
-      if (this.usePointerId !== null || this.isDeathHandled || this.isBlockingPanelOpen()
-        || this.buildingSystem.isActive()) return;
+      if (this.usePointerId !== null || !this.canUseFood()) return;
       this.usePointerId = pointer.id;
       this.useNativePointerId = pointer.event ? pointer.event.pointerId : null;
       this.useButton.setScale(0.92);
@@ -1211,12 +1267,18 @@ class GameScene extends Phaser.Scene {
     this.cancelInteractionHold(); this.exitBuildMode();
     if (this.inventoryUI.isOpen) this.inventoryUI.closePanel();
     if (this.craftingUI.isOpen) this.craftingUI.closePanel();
+    this.inventoryUI.resetBackpackPointer(); this.craftingUI.resetPointer();
+    if (this.virtualJoystick) this.virtualJoystick.reset();
+    if (this.input.keyboard) this.input.keyboard.resetKeys();
+    this.resetBuildTogglePointer(); this.resetPlacePointer();
     this.player.setVelocity(0, 0); this.resetAttackButton(); this.resetUseButton();
   }
 
   saveGame() {
-    if (this.isApplyingSave) return false;
-    if (this.isDeathHandled) { this.showInteractionMessage('Нельзя сохраняться после смерти'); return false; }
+    if (!this.canSave()) {
+      if (this.isPlayerDead()) this.showInteractionMessage('Нельзя сохраняться после смерти');
+      return false;
+    }
     this.prepareForSaveOperation();
     const result = this.saveSystem.save(this.createSaveState());
     this.showInteractionMessage(result.success ? 'Игра сохранена' : 'Ошибка локального хранилища');
@@ -1226,10 +1288,26 @@ class GameScene extends Phaser.Scene {
   isSavedPositionValid(x, y) {
     const cell = this.worldGrid.worldToCell(x, y);
     if (!cell || !this.worldGrid.isWalkable(cell.col, cell.row)) return false;
-    if (this.buildingSystem.isOccupied(cell.col, cell.row)) return false;
-    return !Array.from(this.runtimeWorldObjects.values()).some(
-      (o) => o.active && o.blockerObject && o.col === cell.col && o.row === cell.row
-    );
+    const halfWidth = this.player.body.width / 2;
+    const halfHeight = this.player.body.height / 2;
+    const left = x - halfWidth;
+    const right = x + halfWidth;
+    const top = y - halfHeight;
+    const bottom = y + halfHeight;
+    const topLeftCell = this.worldGrid.worldToCell(left + 0.001, top + 0.001);
+    const bottomRightCell = this.worldGrid.worldToCell(right - 0.001, bottom - 0.001);
+    if (!topLeftCell || !bottomRightCell) return false;
+    for (let row = topLeftCell.row; row <= bottomRightCell.row; row += 1) {
+      for (let col = topLeftCell.col; col <= bottomRightCell.col; col += 1) {
+        if (!this.worldGrid.isWalkable(col, row)) return false;
+      }
+    }
+    return !this.blockingWorldObjects.getChildren().some((blocker) => {
+      const body = blocker && blocker.body;
+      return blocker.active && body && body.enable
+        && left < body.right && right > body.left
+        && top < body.bottom && bottom > body.top;
+    });
   }
 
   findSafePlayerPosition(x, y) {
@@ -1255,16 +1333,21 @@ class GameScene extends Phaser.Scene {
       || !this.buildingSystem.restoreState(state.world.walls)
       || !this.creatureSystem.restoreState(state.world.deadCreatureIds)) throw new Error('Ошибка импорта сохранения.');
     const position = this.findSafePlayerPosition(state.player.x, state.player.y);
+    this.player.setVisible(true);
+    this.player.body.enable = true;
     this.player.setPosition(position.x, position.y); this.player.body.reset(position.x, position.y);
+    this.player.setVelocity(0, 0);
+    this.cameras.main.startFollow(this.player, true, 0.09, 0.09);
     this.inventoryUI.setActiveQuickSlot(state.inventory.activeHotbarIndex);
     this.isDeathHandled = this.playerStatsModel.isDead();
-    this.deathText.setVisible(this.isDeathHandled);
+    this.lastPlayerAttackTime = -Infinity;
+    this.updateDeathPresentation();
     this.inventoryUI.updateFromModel(); this.updateInventoryHud();
     this.statusHUD.update(this.playerStatsModel.getHealth(), this.playerStatsModel.getHunger());
   }
 
   loadGame() {
-    if (this.isApplyingSave) return false;
+    if (!this.canLoad()) return false;
     const loaded = this.saveSystem.load();
     if (!loaded.success) {
       const messages = { notFound: 'Сохранение не найдено', invalidData: 'Сохранение повреждено', storageError: 'Ошибка локального хранилища' };
@@ -1314,7 +1397,7 @@ class GameScene extends Phaser.Scene {
     this.attackButtonLabel.setPosition(this.scale.gameSize.width - 328, this.scale.gameSize.height - 92);
     this.onAttackPointerDown = (pointer, localX, localY, event) => {
       if (event && event.stopPropagation) event.stopPropagation();
-      if (this.attackPointerId !== null) return;
+      if (this.attackPointerId !== null || !this.canAttack()) return;
       this.attackPointerId = pointer.id;
       this.attackNativePointerId = pointer.event ? pointer.event.pointerId : null;
       this.attackButton.setScale(0.92);
@@ -1354,8 +1437,7 @@ class GameScene extends Phaser.Scene {
   }
 
   tryPlayerAttack(time) {
-    if (this.isDeathHandled || this.isBlockingPanelOpen() || this.buildingSystem.isActive()
-      || this.holdActionSystem.active || time - this.lastPlayerAttackTime < PLAYER_MELEE_ATTACK.cooldownMs) {
+    if (!this.canAttack() || time - this.lastPlayerAttackTime < PLAYER_MELEE_ATTACK.cooldownMs) {
       return false;
     }
     this.lastPlayerAttackTime = time;
@@ -1419,7 +1501,7 @@ class GameScene extends Phaser.Scene {
 
     this.onBuildTogglePointerDown = (pointer, localX, localY, event) => {
       if (event && event.stopPropagation) event.stopPropagation();
-      if (this.buildTogglePointerId !== null || this.isDeathHandled) return;
+      if (this.buildTogglePointerId !== null || !this.canBuild()) return;
       this.buildTogglePointerId = pointer.id;
       this.buildToggleNativePointerId = pointer.event ? pointer.event.pointerId : null;
       this.buildToggleButton.setScale(0.92);
@@ -1428,7 +1510,7 @@ class GameScene extends Phaser.Scene {
     };
     this.onPlacePointerDown = (pointer, localX, localY, event) => {
       if (event && event.stopPropagation) event.stopPropagation();
-      if (this.placePointerId !== null || this.isDeathHandled || !this.buildingSystem.isActive()) return;
+      if (this.placePointerId !== null || !this.canBuild() || !this.buildingSystem.isActive()) return;
       this.placePointerId = pointer.id;
       this.placeNativePointerId = pointer.event ? pointer.event.pointerId : null;
       this.placeButton.setScale(0.92);
@@ -1498,13 +1580,12 @@ class GameScene extends Phaser.Scene {
   }
 
   enterBuildMode() {
-    if (this.isDeathHandled) return false;
+    if (!this.canBuild()) return false;
     if (this.inventoryUI.isOpen) this.inventoryUI.closePanel();
     if (this.craftingUI.isOpen) this.craftingUI.closePanel();
     this.cancelInteractionHold();
     this.resetActionButton();
     this.resetUseButton();
-    this.resetAttackButton();
     this.resetAttackButton();
     this.targetMarker.setVisible(false);
     this.buildingSystem.enterMode('WOOD_WALL');
@@ -1523,7 +1604,7 @@ class GameScene extends Phaser.Scene {
     this.placeButton.disableInteractive();
     this.placeButtonLabel.setVisible(false);
     this.resetPlacePointer();
-    if (!this.isDeathHandled && !this.isBlockingPanelOpen()) this.updateInteractionTarget();
+    if (!this.buildingCleanupDone && this.canHarvest()) this.updateInteractionTarget();
   }
 
   getBuildTargetCell() {
@@ -1580,7 +1661,7 @@ class GameScene extends Phaser.Scene {
   }
 
   tryPlaceBuilding() {
-    if (this.isDeathHandled || !this.buildingSystem.isActive()) return false;
+    if (!this.canBuild() || !this.buildingSystem.isActive()) return false;
     const target = this.getBuildTargetCell();
     const validation = this.validateBuildCell(target);
     if (!validation.valid) {
@@ -1649,9 +1730,7 @@ class GameScene extends Phaser.Scene {
   }
 
   tryUseActiveItem() {
-    if (this.isDeathHandled || this.isBlockingPanelOpen() || this.buildingSystem.isActive()) {
-      return false;
-    }
+    if (!this.canUseFood()) return false;
     const slotIndex = this.inventoryUI.getActiveHotbarIndex();
     const slot = this.inventoryModel.getSlot(slotIndex);
     if (slot === null) {
@@ -1694,10 +1773,17 @@ class GameScene extends Phaser.Scene {
     if (this.inventoryUI && this.inventoryUI.isOpen) this.inventoryUI.closePanel();
     if (this.craftingUI && this.craftingUI.isOpen) this.craftingUI.closePanel();
     this.targetMarker.setVisible(false);
-    this.useButton.setFillStyle(0x303840, 0.55);
-    this.useButton.setStrokeStyle(3, 0x77838c, 0.5);
-    this.deathText.setVisible(true);
+    this.updateDeathPresentation();
     return true;
+  }
+
+  updateDeathPresentation() {
+    const isDead = this.isPlayerDead();
+    if (this.deathText) this.deathText.setVisible(isDead);
+    if (this.useButton) {
+      this.useButton.setFillStyle(isDead ? 0x303840 : 0x36516a, isDead ? 0.55 : 0.88);
+      this.useButton.setStrokeStyle(3, isDead ? 0x77838c : 0xc8e8ff, isDead ? 0.5 : 0.85);
+    }
   }
 
   cleanupSurvivalInterface() {
@@ -1732,7 +1818,10 @@ class GameScene extends Phaser.Scene {
       this.inventoryUI.closePanel();
       return;
     }
-    if (isOpen && this.buildingSystem && this.buildingSystem.isActive()) this.exitBuildMode();
+    if (isOpen && this.buildingSystem && this.buildingSystem.isActive()) {
+      this.inventoryUI.closePanel();
+      return;
+    }
     if (isOpen && this.craftingUI && this.craftingUI.isOpen) this.craftingUI.closePanel();
     this.handleBlockingPanelChanged(isOpen);
   }
@@ -1742,7 +1831,10 @@ class GameScene extends Phaser.Scene {
       this.craftingUI.closePanel();
       return;
     }
-    if (isOpen && this.buildingSystem && this.buildingSystem.isActive()) this.exitBuildMode();
+    if (isOpen && this.buildingSystem && this.buildingSystem.isActive()) {
+      this.craftingUI.closePanel();
+      return;
+    }
     if (isOpen && this.inventoryUI && this.inventoryUI.isOpen) this.inventoryUI.closePanel();
     this.handleBlockingPanelChanged(isOpen);
   }
@@ -1755,7 +1847,8 @@ class GameScene extends Phaser.Scene {
     if (this.player && this.player.body) this.player.setVelocity(0, 0);
     this.resetUseButton();
     this.resetAttackButton();
-    if (!isOpen && !this.isDeathHandled && !this.isBlockingPanelOpen()) {
+    if (isOpen) this.targetMarker.setVisible(false);
+    if (!isOpen && this.canHarvest()) {
       this.updateInteractionTarget();
     }
   }
@@ -1821,15 +1914,17 @@ class GameScene extends Phaser.Scene {
       return;
     }
 
-    if (this.isBlockingPanelOpen()) {
+    if (Phaser.Input.Keyboard.JustDown(this.buildToggleKey) && this.canBuild()) {
+      this.toggleBuildMode();
+    }
+    if (this.buildingSystem.isActive() && Phaser.Input.Keyboard.JustDown(this.cancelBuildKey)) {
+      this.exitBuildMode();
+    }
+
+    if (!this.canMove()) {
       this.player.setVelocity(0, 0);
       this.updateWorldDepth(this.player);
       return;
-    }
-
-    if (Phaser.Input.Keyboard.JustDown(this.buildToggleKey)) this.toggleBuildMode();
-    if (this.buildingSystem.isActive() && Phaser.Input.Keyboard.JustDown(this.cancelBuildKey)) {
-      this.exitBuildMode();
     }
 
     let horizontal = 0;
@@ -1841,7 +1936,7 @@ class GameScene extends Phaser.Scene {
     if (this.cursors.down.isDown || this.wasd.down.isDown) vertical += 1;
 
     const joystickDirection = this.virtualJoystick.getDirection();
-    const movement = new Phaser.Math.Vector2(
+    const movement = this.movementVector.set(
       horizontal + joystickDirection.x,
       vertical + joystickDirection.y
     );
@@ -1881,6 +1976,6 @@ class GameScene extends Phaser.Scene {
       this.releaseInteractionHold('keyboard');
     }
 
-    this.updateInteractionHold(delta);
+    this.updateInteractionHold(statsDelta);
   }
 }
