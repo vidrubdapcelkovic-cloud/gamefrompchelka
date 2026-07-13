@@ -79,4 +79,17 @@ class GroundItemSystem {
     });
     this.items = [];
   }
+
+  exportState() { return this.getItems().map(({ itemType, quantity, x, y }) => ({ itemType, quantity, x, y })); }
+  restoreState(items) {
+    if (!Array.isArray(items)) return false;
+    const copy = [];
+    for (const item of items) {
+      if (!item || !ItemCatalog[item.itemType] || !Number.isInteger(item.quantity)
+        || item.quantity <= 0 || item.quantity > ItemCatalog[item.itemType].maxStack
+        || !Number.isFinite(item.x) || !Number.isFinite(item.y)) return false;
+      copy.push({ itemType: item.itemType, quantity: item.quantity, x: item.x, y: item.y });
+    }
+    this.clear(); copy.forEach((item) => this.spawn(item.itemType, item.quantity, item.x, item.y)); return true;
+  }
 }

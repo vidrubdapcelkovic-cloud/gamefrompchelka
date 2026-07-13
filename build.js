@@ -18,6 +18,7 @@ const requiredRelativePaths = [
   'src/systems/CraftingModel.js',
   'src/systems/BuildingSystem.js',
   'src/systems/CreatureSystem.js',
+  'src/systems/SaveSystem.js',
   'src/systems/PlayerStatsModel.js',
   'src/systems/GroundItemSystem.js',
   'src/ui/StatusHUD.js',
@@ -62,6 +63,7 @@ const inventoryModel = fs.readFileSync(requireFile('src/systems/InventoryModel.j
 const craftingModel = fs.readFileSync(requireFile('src/systems/CraftingModel.js'), 'utf8');
 const buildingSystem = fs.readFileSync(requireFile('src/systems/BuildingSystem.js'), 'utf8');
 const creatureSystem = fs.readFileSync(requireFile('src/systems/CreatureSystem.js'), 'utf8');
+const saveSystem = fs.readFileSync(requireFile('src/systems/SaveSystem.js'), 'utf8');
 const playerStatsModel = fs.readFileSync(requireFile('src/systems/PlayerStatsModel.js'), 'utf8');
 const groundItemSystem = fs.readFileSync(requireFile('src/systems/GroundItemSystem.js'), 'utf8');
 const statusHUD = fs.readFileSync(requireFile('src/ui/StatusHUD.js'), 'utf8');
@@ -108,6 +110,7 @@ ${safeScript(inventoryModel)}
 ${safeScript(craftingModel)}
 ${safeScript(buildingSystem)}
 ${safeScript(creatureSystem)}
+${safeScript(saveSystem)}
 ${safeScript(playerStatsModel)}
 ${safeScript(groundItemSystem)}
 ${safeScript(statusHUD)}
@@ -145,6 +148,7 @@ const pagesHtml = `<!doctype html>
     <script src="./src/systems/CraftingModel.js"></script>
     <script src="./src/systems/BuildingSystem.js"></script>
     <script src="./src/systems/CreatureSystem.js"></script>
+    <script src="./src/systems/SaveSystem.js"></script>
     <script src="./src/systems/PlayerStatsModel.js"></script>
     <script src="./src/systems/GroundItemSystem.js"></script>
     <script src="./src/ui/StatusHUD.js"></script>
@@ -194,6 +198,7 @@ fs.copyFileSync(requireFile('src/systems/InventoryModel.js'), path.join(docsSyst
 fs.copyFileSync(requireFile('src/systems/CraftingModel.js'), path.join(docsSystemsDirectory, 'CraftingModel.js'));
 fs.copyFileSync(requireFile('src/systems/BuildingSystem.js'), path.join(docsSystemsDirectory, 'BuildingSystem.js'));
 fs.copyFileSync(requireFile('src/systems/CreatureSystem.js'), path.join(docsSystemsDirectory, 'CreatureSystem.js'));
+fs.copyFileSync(requireFile('src/systems/SaveSystem.js'), path.join(docsSystemsDirectory, 'SaveSystem.js'));
 fs.copyFileSync(requireFile('src/systems/PlayerStatsModel.js'), path.join(docsSystemsDirectory, 'PlayerStatsModel.js'));
 fs.copyFileSync(requireFile('src/systems/GroundItemSystem.js'), path.join(docsSystemsDirectory, 'GroundItemSystem.js'));
 fs.copyFileSync(requireFile('src/ui/StatusHUD.js'), path.join(docsUiDirectory, 'StatusHUD.js'));

@@ -186,4 +186,19 @@ class InventoryModel {
   clear() {
     this.slots.fill(null);
   }
+
+  exportState() { return this.getSlots(); }
+
+  importState(slots) {
+    if (!Array.isArray(slots) || slots.length !== 25) return false;
+    const copy = [];
+    for (const slot of slots) {
+      if (slot === null) { copy.push(null); continue; }
+      if (!slot || !ItemCatalog[slot.itemType] || !Number.isInteger(slot.quantity)
+        || slot.quantity <= 0 || slot.quantity > ItemCatalog[slot.itemType].maxStack) return false;
+      copy.push({ itemType: slot.itemType, quantity: slot.quantity });
+    }
+    this.slots = copy;
+    return true;
+  }
 }

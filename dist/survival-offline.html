@@ -574,6 +574,21 @@ class InventoryModel {
   clear() {
     this.slots.fill(null);
   }
+
+  exportState() { return this.getSlots(); }
+
+  importState(slots) {
+    if (!Array.isArray(slots) || slots.length !== 25) return false;
+    const copy = [];
+    for (const slot of slots) {
+      if (slot === null) { copy.push(null); continue; }
+      if (!slot || !ItemCatalog[slot.itemType] || !Number.isInteger(slot.quantity)
+        || slot.quantity <= 0 || slot.quantity > ItemCatalog[slot.itemType].maxStack) return false;
+      copy.push({ itemType: slot.itemType, quantity: slot.quantity });
+    }
+    this.slots = copy;
+    return true;
+  }
 }
 
 class CraftingModel {
@@ -686,16 +701,29 @@ class BuildingSystem {
     return this.placements.filter((placement) => placement.active).slice();
   }
 
+  exportState() { return this.getPlacements().map(({ buildType, col, row }) => ({ buildType, col, row })); }
+  clearPlacements() {
+    this.placements.forEach((p) => { if (p.visualObject && p.visualObject.active) p.visualObject.destroy(); p.active = false; });
+    this.placements = []; this.occupiedCells.clear();
+  }
+  restoreState(walls) {
+    if (!Array.isArray(walls)) return false; const cells = new Set();
+    for (const wall of walls) {
+      const key = wall && `${wall.col},${wall.row}`;
+      if (!wall || !BuildCatalog[wall.buildType] || !Number.isInteger(wall.col) || !Number.isInteger(wall.row)
+        || !this.worldGrid.isInside(wall.col, wall.row) || cells.has(key)) return false;
+      cells.add(key);
+    }
+    this.clearPlacements(); const previousType = this.buildType; const previousActive = this.active;
+    walls.forEach((wall) => { this.active = true; this.buildType = wall.buildType; this.place(wall.col, wall.row); });
+    this.active = previousActive; this.buildType = previousType; if (!this.active) this.previewObject.setVisible(false); return true;
+  }
+
   clear() {
     if (this.destroyed) return;
     this.destroyed = true;
     this.exitMode();
-    this.placements.forEach((placement) => {
-      if (placement.visualObject && placement.visualObject.active) placement.visualObject.destroy();
-      placement.active = false;
-    });
-    this.placements = [];
-    this.occupiedCells.clear();
+    this.clearPlacements();
     if (this.previewObject && this.previewObject.active) this.previewObject.destroy();
     this.previewObject = null;
   }
@@ -710,14 +738,14 @@ class CreatureSystem {
     this.nextId = 1;
   }
 
-  spawn(type, x, y) {
+  spawn(type, x, y, stableId) {
     const definition = CreatureCatalog[type];
     if (!definition) throw new Error(`Неизвестный тип существа: ${type}.`);
     const sprite = this.group.create(x, y, 'temporary-slime');
     sprite.body.setSize(24, 18);
     sprite.setCollideWorldBounds(true);
     const creature = {
-      id: `creature-${this.nextId++}`, type, health: definition.maxHealth,
+      id: stableId || `creature-${this.nextId++}`, type, health: definition.maxHealth,
       state: 'idle', sprite, active: true, lastAttackTime: -Infinity,
       spawnX: x, spawnY: y
     };
@@ -798,6 +826,24 @@ class CreatureSystem {
     return this.creatures.slice();
   }
 
+  exportState() { return this.creatures.filter((c) => !c.active || c.state === 'dead').map((c) => c.id); }
+  restoreState(deadCreatureIds) {
+    if (!Array.isArray(deadCreatureIds) || deadCreatureIds.some((id) => typeof id !== 'string')
+      || new Set(deadCreatureIds).size !== deadCreatureIds.length) return false;
+    const dead = new Set(deadCreatureIds);
+    this.creatures.forEach((creature) => {
+      const definition = CreatureCatalog[creature.type];
+      if (!creature.sprite || !creature.sprite.active) {
+        creature.sprite = this.group.create(creature.spawnX, creature.spawnY, 'temporary-slime');
+        creature.sprite.body.setSize(24, 18); creature.sprite.setCollideWorldBounds(true);
+      } else creature.sprite.setPosition(creature.spawnX, creature.spawnY);
+      creature.health = definition.maxHealth; creature.active = true; creature.state = 'idle'; creature.lastAttackTime = -Infinity;
+      creature.sprite.body.enable = true; creature.sprite.setVisible(true); creature.sprite.setVelocity(0, 0);
+      if (dead.has(creature.id)) this.damage(creature.id, definition.maxHealth);
+    });
+    return true;
+  }
+
   clear() {
     this.creatures.forEach((creature) => {
       if (creature.sprite && creature.sprite.active) creature.sprite.destroy();
@@ -811,6 +857,62 @@ class CreatureSystem {
       this.group = null;
     }
   }
+}
+
+const STORAGE_KEY = 'survival-save-v1';
+const VERSION = 1;
+
+class SaveSystem {
+  constructor(storage) {
+    if (storage !== undefined) this.storage = storage;
+    else { try { this.storage = globalThis.localStorage; } catch { this.storage = null; } }
+  }
+
+  normalize(state) {
+    try {
+      if (!state || state.version !== VERSION || !Number.isFinite(state.savedAt)) return null;
+      const p = state.player, inv = state.inventory, w = state.world;
+      if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)
+        || !Number.isFinite(p.health) || p.health < 0 || p.health > 100
+        || !Number.isFinite(p.hunger) || p.hunger < 0 || p.hunger > 100) return null;
+      if (!inv || !Number.isInteger(inv.activeHotbarIndex) || inv.activeHotbarIndex < 0
+        || inv.activeHotbarIndex > 4 || !Array.isArray(inv.slots) || inv.slots.length !== 25) return null;
+      const slots = inv.slots.map((slot) => {
+        if (slot === null) return null;
+        if (!slot || !ItemCatalog[slot.itemType] || !Number.isInteger(slot.quantity)
+          || slot.quantity <= 0 || slot.quantity > ItemCatalog[slot.itemType].maxStack) throw new Error();
+        return { itemType: slot.itemType, quantity: slot.quantity };
+      });
+      if (!w) return null;
+      const uniqueStrings = (value) => Array.isArray(value) && value.every((v) => typeof v === 'string')
+        && new Set(value).size === value.length ? value.slice() : null;
+      const removedObjectIds = uniqueStrings(w.removedObjectIds);
+      const deadCreatureIds = uniqueStrings(w.deadCreatureIds);
+      if (!removedObjectIds || !deadCreatureIds || !Array.isArray(w.groundItems) || !Array.isArray(w.walls)) return null;
+      const groundItems = w.groundItems.map((item) => {
+        if (!item || !ItemCatalog[item.itemType] || !Number.isInteger(item.quantity)
+          || item.quantity <= 0 || item.quantity > ItemCatalog[item.itemType].maxStack
+          || !Number.isFinite(item.x) || !Number.isFinite(item.y)) throw new Error();
+        return { itemType: item.itemType, quantity: item.quantity, x: item.x, y: item.y };
+      });
+      const wallCells = new Set();
+      const walls = w.walls.map((wall) => {
+        if (!wall || !BuildCatalog[wall.buildType] || !Number.isInteger(wall.col) || !Number.isInteger(wall.row)
+          || wall.col < 0 || wall.col >= 48 || wall.row < 0 || wall.row >= 36) throw new Error();
+        const key = `${wall.col},${wall.row}`; if (wallCells.has(key)) throw new Error(); wallCells.add(key);
+        return { buildType: wall.buildType, col: wall.col, row: wall.row };
+      });
+      return { version: 1, savedAt: state.savedAt,
+        player: { x: p.x, y: p.y, health: p.health, hunger: p.hunger },
+        inventory: { activeHotbarIndex: inv.activeHotbarIndex, slots },
+        world: { removedObjectIds, groundItems, walls, deadCreatureIds } };
+    } catch { return null; }
+  }
+
+  hasSave() { try { return this.storage.getItem(STORAGE_KEY) !== null; } catch { return false; } }
+  save(state) { try { const normalized = this.normalize(state); if (!normalized) return { success: false, reason: 'invalidData' }; this.storage.setItem(STORAGE_KEY, JSON.stringify(normalized)); return { success: true }; } catch { return { success: false, reason: 'storageError' }; } }
+  load() { try { const raw = this.storage.getItem(STORAGE_KEY); if (raw === null) return { success: false, reason: 'notFound' }; let parsed; try { parsed = JSON.parse(raw); } catch { return { success: false, reason: 'invalidData' }; } const state = this.normalize(parsed); return state ? { success: true, state } : { success: false, reason: 'invalidData' }; } catch { return { success: false, reason: 'storageError' }; } }
+  deleteSave() { try { this.storage.removeItem(STORAGE_KEY); return { success: true }; } catch { return { success: false, reason: 'storageError' }; } }
 }
 
 const PLAYER_MAX_HEALTH = 100;
@@ -877,6 +979,14 @@ class PlayerStatsModel {
   reset() {
     this.health = this.maxHealth;
     this.hunger = this.maxHunger;
+  }
+
+  exportState() { return { health: this.health, hunger: this.hunger }; }
+
+  importState(state) {
+    if (!state || !Number.isFinite(state.health) || state.health < 0 || state.health > 100
+      || !Number.isFinite(state.hunger) || state.hunger < 0 || state.hunger > 100) return false;
+    this.health = state.health; this.hunger = state.hunger; return true;
   }
 }
 
@@ -960,6 +1070,19 @@ class GroundItemSystem {
       item.active = false;
     });
     this.items = [];
+  }
+
+  exportState() { return this.getItems().map(({ itemType, quantity, x, y }) => ({ itemType, quantity, x, y })); }
+  restoreState(items) {
+    if (!Array.isArray(items)) return false;
+    const copy = [];
+    for (const item of items) {
+      if (!item || !ItemCatalog[item.itemType] || !Number.isInteger(item.quantity)
+        || item.quantity <= 0 || item.quantity > ItemCatalog[item.itemType].maxStack
+        || !Number.isFinite(item.x) || !Number.isFinite(item.y)) return false;
+      copy.push({ itemType: item.itemType, quantity: item.quantity, x: item.x, y: item.y });
+    }
+    this.clear(); copy.forEach((item) => this.spawn(item.itemType, item.quantity, item.x, item.y)); return true;
   }
 }
 
@@ -1768,6 +1891,8 @@ class GameScene extends Phaser.Scene {
     this.inventoryModel = new InventoryModel();
     this.craftingModel = new CraftingModel(this.inventoryModel);
     this.playerStatsModel = new PlayerStatsModel();
+    this.saveSystem = new SaveSystem();
+    this.isApplyingSave = false;
     this.isDeathHandled = false;
     this.createWorld();
     this.createPlayer();
@@ -1784,6 +1909,7 @@ class GameScene extends Phaser.Scene {
     this.createSurvivalInterface();
     this.createBuildingInterface();
     this.createCombatInterface();
+    this.createSaveInterface();
     this.registerLifecycleHandlers();
   }
 
@@ -2013,7 +2139,9 @@ class GameScene extends Phaser.Scene {
     this.groundItemSystem = new GroundItemSystem(this, {
       WOOD: 'temporary-ground-wood',
       STONE: 'temporary-ground-stone',
-      BERRIES: 'temporary-ground-berries'
+      BERRIES: 'temporary-ground-berries',
+      STONE_AXE: 'temporary-stone-axe',
+      STONE_PICKAXE: 'temporary-stone-pickaxe'
     });
 
     FixedWorldObjects.forEach((objectData) => {
@@ -2164,7 +2292,7 @@ class GameScene extends Phaser.Scene {
         throw new Error(`Недопустимая клетка появления слизня (${col}, ${row}).`);
       }
       const position = this.worldGrid.cellToWorldCenter(col, row);
-      this.creatureSystem.spawn('SLIME', position.x, position.y);
+      this.creatureSystem.spawn('SLIME', position.x, position.y, `SLIME_${col}_${row}`);
     });
     this.creatureMapCollider = this.physics.add.collider(this.creatureSystem.group, this.surfaceLayer);
     this.creatureObstacleCollider = this.physics.add.collider(
@@ -2380,6 +2508,8 @@ class GameScene extends Phaser.Scene {
     this.placeBuildKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER);
     this.cancelBuildKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
     this.attackKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+    this.saveKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.K);
+    this.loadKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.L);
   }
 
   createVirtualJoystick() {
@@ -2626,19 +2756,35 @@ class GameScene extends Phaser.Scene {
     this.targetMarker.setVisible(false);
     this.hideHoldProgress();
 
-    if (runtimeObject.visualObject && runtimeObject.visualObject.active) {
-      runtimeObject.visualObject.destroy();
-    }
-    if (runtimeObject.blockerObject
-      && runtimeObject.blockerObject !== runtimeObject.visualObject
-      && runtimeObject.blockerObject.active) {
-      runtimeObject.blockerObject.destroy();
-    }
-    this.runtimeWorldObjects.delete(runtimeObject.id);
+    this.setRuntimeWorldObjectActive(runtimeObject, false);
 
     const drop = WORLD_OBJECT_DROPS[runtimeObject.type];
     this.groundItemSystem.spawn(drop.itemType, drop.quantity, position.x, position.y);
     this.showInteractionMessage(`${drop.itemType} ×${drop.quantity}`);
+  }
+
+  setRuntimeWorldObjectActive(runtimeObject, active) {
+    runtimeObject.active = active;
+    if (runtimeObject.visualObject && runtimeObject.visualObject.active) {
+      runtimeObject.visualObject.setVisible(active);
+    }
+    if (runtimeObject.blockerObject && runtimeObject.blockerObject.body) {
+      runtimeObject.blockerObject.body.enable = active;
+      if (runtimeObject.blockerObject === runtimeObject.visualObject) {
+        runtimeObject.blockerObject.setVisible(active);
+      }
+    }
+  }
+
+  restoreRemovedWorldObjects(removedIds) {
+    const removed = new Set(removedIds);
+    const targets = [];
+    this.runtimeWorldObjects.forEach((object) => {
+      this.setRuntimeWorldObjectActive(object, !removed.has(object.id));
+      if (object.active) targets.push(object.interactionTarget);
+    });
+    this.interactionTargets = targets;
+    this.interactionSystem.setTargets(targets);
   }
 
   showInteractionMessage(message) {
@@ -2915,6 +3061,109 @@ class GameScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.cleanupSurvivalInterface, this);
     this.events.once(Phaser.Scenes.Events.DESTROY, this.cleanupSurvivalInterface, this);
     this.positionUseButton();
+  }
+
+  createSaveState() {
+    const stats = this.playerStatsModel.exportState();
+    return { version: 1, savedAt: Date.now(), player: { x: this.player.x, y: this.player.y, ...stats },
+      inventory: { activeHotbarIndex: this.inventoryUI.getActiveHotbarIndex(), slots: this.inventoryModel.exportState() },
+      world: {
+        removedObjectIds: Array.from(this.runtimeWorldObjects.values()).filter((o) => !o.active).map((o) => o.id),
+        groundItems: this.groundItemSystem.exportState(), walls: this.buildingSystem.exportState(),
+        deadCreatureIds: this.creatureSystem.exportState()
+      } };
+  }
+
+  prepareForSaveOperation() {
+    this.cancelInteractionHold(); this.exitBuildMode();
+    if (this.inventoryUI.isOpen) this.inventoryUI.closePanel();
+    if (this.craftingUI.isOpen) this.craftingUI.closePanel();
+    this.player.setVelocity(0, 0); this.resetAttackButton(); this.resetUseButton();
+  }
+
+  saveGame() {
+    if (this.isApplyingSave) return false;
+    if (this.isDeathHandled) { this.showInteractionMessage('Нельзя сохраняться после смерти'); return false; }
+    this.prepareForSaveOperation();
+    const result = this.saveSystem.save(this.createSaveState());
+    this.showInteractionMessage(result.success ? 'Игра сохранена' : 'Ошибка локального хранилища');
+    return result.success;
+  }
+
+  isSavedPositionValid(x, y) {
+    const cell = this.worldGrid.worldToCell(x, y);
+    if (!cell || !this.worldGrid.isWalkable(cell.col, cell.row)) return false;
+    if (this.buildingSystem.isOccupied(cell.col, cell.row)) return false;
+    return !Array.from(this.runtimeWorldObjects.values()).some(
+      (o) => o.active && o.blockerObject && o.col === cell.col && o.row === cell.row
+    );
+  }
+
+  findSafePlayerPosition(x, y) {
+    if (this.isSavedPositionValid(x, y)) return { x, y };
+    const start = FixedMapData.playerStart;
+    const cells = [];
+    for (let row = 0; row < this.worldGrid.rows; row += 1) for (let col = 0; col < this.worldGrid.columns; col += 1) {
+      cells.push({ col, row, distance: Math.abs(col - start.col) + Math.abs(row - start.row) });
+    }
+    cells.sort((a, b) => a.distance - b.distance || a.row - b.row || a.col - b.col);
+    for (const cell of cells) {
+      const p = this.worldGrid.cellToWorldCenter(cell.col, cell.row);
+      if (this.isSavedPositionValid(p.x, p.y)) return p;
+    }
+    throw new Error('Не найдена допустимая позиция игрока.');
+  }
+
+  applySaveState(state) {
+    if (!this.inventoryModel.importState(state.inventory.slots)
+      || !this.playerStatsModel.importState(state.player)) throw new Error('Ошибка импорта сохранения.');
+    this.restoreRemovedWorldObjects(state.world.removedObjectIds);
+    if (!this.groundItemSystem.restoreState(state.world.groundItems)
+      || !this.buildingSystem.restoreState(state.world.walls)
+      || !this.creatureSystem.restoreState(state.world.deadCreatureIds)) throw new Error('Ошибка импорта сохранения.');
+    const position = this.findSafePlayerPosition(state.player.x, state.player.y);
+    this.player.setPosition(position.x, position.y); this.player.body.reset(position.x, position.y);
+    this.inventoryUI.setActiveQuickSlot(state.inventory.activeHotbarIndex);
+    this.isDeathHandled = this.playerStatsModel.isDead();
+    this.deathText.setVisible(this.isDeathHandled);
+    this.inventoryUI.updateFromModel(); this.updateInventoryHud();
+    this.statusHUD.update(this.playerStatsModel.getHealth(), this.playerStatsModel.getHunger());
+  }
+
+  loadGame() {
+    if (this.isApplyingSave) return false;
+    const loaded = this.saveSystem.load();
+    if (!loaded.success) {
+      const messages = { notFound: 'Сохранение не найдено', invalidData: 'Сохранение повреждено', storageError: 'Ошибка локального хранилища' };
+      this.showInteractionMessage(messages[loaded.reason]); return false;
+    }
+    const rollback = this.createSaveState(); this.isApplyingSave = true;
+    try { this.prepareForSaveOperation(); this.applySaveState(loaded.state); this.showInteractionMessage('Игра загружена'); return true; }
+    catch { try { this.applySaveState(rollback); } catch {} this.showInteractionMessage('Сохранение повреждено'); return false; }
+    finally { this.isApplyingSave = false; }
+  }
+
+  createSaveInterface() {
+    this.savePointers = { save: null, load: null }; this.saveNativePointers = { save: null, load: null };
+    const make = (label, x, y) => ({ button: this.add.circle(x, y, 25, 0x35536b, 0.9).setStrokeStyle(2, 0xcbe9ff, .8).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 12).setInteractive(),
+      text: this.add.text(x, y, label, { fontFamily: 'Arial, sans-serif', fontSize: '10px', fontStyle: 'bold', color: '#fff' }).setOrigin(.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 13) });
+    this.saveControl = make('SAVE', 450, 42); this.loadControl = make('LOAD', 520, 42);
+    const bind = (name, control, action) => { control.handler = (pointer, lx, ly, event) => { if (event?.stopPropagation) event.stopPropagation(); if (this.savePointers[name] !== null || this.isApplyingSave) return; this.savePointers[name] = pointer.id; this.saveNativePointers[name] = pointer.event?.pointerId ?? null; action.call(this); }; control.button.on('pointerdown', control.handler); };
+    bind('save', this.saveControl, this.saveGame); bind('load', this.loadControl, this.loadGame);
+    this.onSavePointerUp = (pointer) => { for (const n of ['save','load']) if (this.savePointers[n] === pointer.id) this.savePointers[n] = this.saveNativePointers[n] = null; };
+    this.onSaveWindowUp = (event) => { for (const n of ['save','load']) if (this.saveNativePointers[n] === event.pointerId) this.savePointers[n] = this.saveNativePointers[n] = null; };
+    this.onSaveBlur = () => { this.savePointers.save = this.savePointers.load = this.saveNativePointers.save = this.saveNativePointers.load = null; };
+    this.onSaveVisibility = () => { if (document.hidden) this.onSaveBlur(); };
+    this.input.on('pointerup', this.onSavePointerUp); this.input.on('pointerupoutside', this.onSavePointerUp); window.addEventListener('pointerup', this.onSaveWindowUp); window.addEventListener('pointercancel', this.onSaveWindowUp); window.addEventListener('blur', this.onSaveBlur); document.addEventListener('visibilitychange', this.onSaveVisibility);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.cleanupSaveInterface, this); this.events.once(Phaser.Scenes.Events.DESTROY, this.cleanupSaveInterface, this);
+  }
+
+  cleanupSaveInterface() {
+    if (!this.saveControl) return; this.isApplyingSave = false;
+    this.saveControl.button.off('pointerdown', this.saveControl.handler); this.loadControl.button.off('pointerdown', this.loadControl.handler);
+    this.input.off('pointerup', this.onSavePointerUp); this.input.off('pointerupoutside', this.onSavePointerUp); window.removeEventListener('pointerup', this.onSaveWindowUp); window.removeEventListener('pointercancel', this.onSaveWindowUp); window.removeEventListener('blur', this.onSaveBlur); document.removeEventListener('visibilitychange', this.onSaveVisibility);
+    this.events.off(Phaser.Scenes.Events.SHUTDOWN, this.cleanupSaveInterface, this); this.events.off(Phaser.Scenes.Events.DESTROY, this.cleanupSaveInterface, this);
+    [this.saveControl.button,this.saveControl.text,this.loadControl.button,this.loadControl.text].forEach((o)=>{if(o.active)o.destroy();}); this.saveControl = this.loadControl = null;
   }
 
   createCombatInterface() {
@@ -3414,6 +3663,7 @@ class GameScene extends Phaser.Scene {
 
   update(time, delta) {
     if (this.survivalCleanupDone || !this.playerStatsModel) return;
+    if (this.isApplyingSave) return;
     const statsDelta = Math.min(Math.max(Number.isFinite(delta) ? delta : 0, 0), 250);
     this.playerStatsModel.update(statsDelta);
     this.statusHUD.update(
@@ -3431,6 +3681,8 @@ class GameScene extends Phaser.Scene {
       this.playerStatsModel.getHunger()
     );
     if (this.playerStatsModel.isDead()) this.handlePlayerDeath();
+    if (Phaser.Input.Keyboard.JustDown(this.saveKey)) this.saveGame();
+    if (Phaser.Input.Keyboard.JustDown(this.loadKey)) this.loadGame();
     if (this.isDeathHandled) {
       this.player.setVelocity(0, 0);
       return;

@@ -63,4 +63,12 @@ class PlayerStatsModel {
     this.health = this.maxHealth;
     this.hunger = this.maxHunger;
   }
+
+  exportState() { return { health: this.health, hunger: this.hunger }; }
+
+  importState(state) {
+    if (!state || !Number.isFinite(state.health) || state.health < 0 || state.health > 100
+      || !Number.isFinite(state.hunger) || state.hunger < 0 || state.hunger > 100) return false;
+    this.health = state.health; this.hunger = state.hunger; return true;
+  }
 }

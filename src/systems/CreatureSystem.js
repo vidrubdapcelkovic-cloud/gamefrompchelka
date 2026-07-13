@@ -7,14 +7,14 @@ class CreatureSystem {
     this.nextId = 1;
   }
 
-  spawn(type, x, y) {
+  spawn(type, x, y, stableId) {
     const definition = CreatureCatalog[type];
     if (!definition) throw new Error(`Неизвестный тип существа: ${type}.`);
     const sprite = this.group.create(x, y, 'temporary-slime');
     sprite.body.setSize(24, 18);
     sprite.setCollideWorldBounds(true);
     const creature = {
-      id: `creature-${this.nextId++}`, type, health: definition.maxHealth,
+      id: stableId || `creature-${this.nextId++}`, type, health: definition.maxHealth,
       state: 'idle', sprite, active: true, lastAttackTime: -Infinity,
       spawnX: x, spawnY: y
     };
@@ -93,6 +93,24 @@ class CreatureSystem {
 
   getCreatures() {
     return this.creatures.slice();
+  }
+
+  exportState() { return this.creatures.filter((c) => !c.active || c.state === 'dead').map((c) => c.id); }
+  restoreState(deadCreatureIds) {
+    if (!Array.isArray(deadCreatureIds) || deadCreatureIds.some((id) => typeof id !== 'string')
+      || new Set(deadCreatureIds).size !== deadCreatureIds.length) return false;
+    const dead = new Set(deadCreatureIds);
+    this.creatures.forEach((creature) => {
+      const definition = CreatureCatalog[creature.type];
+      if (!creature.sprite || !creature.sprite.active) {
+        creature.sprite = this.group.create(creature.spawnX, creature.spawnY, 'temporary-slime');
+        creature.sprite.body.setSize(24, 18); creature.sprite.setCollideWorldBounds(true);
+      } else creature.sprite.setPosition(creature.spawnX, creature.spawnY);
+      creature.health = definition.maxHealth; creature.active = true; creature.state = 'idle'; creature.lastAttackTime = -Infinity;
+      creature.sprite.body.enable = true; creature.sprite.setVisible(true); creature.sprite.setVelocity(0, 0);
+      if (dead.has(creature.id)) this.damage(creature.id, definition.maxHealth);
+    });
+    return true;
   }
 
   clear() {

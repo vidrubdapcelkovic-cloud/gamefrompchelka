@@ -76,16 +76,29 @@ class BuildingSystem {
     return this.placements.filter((placement) => placement.active).slice();
   }
 
+  exportState() { return this.getPlacements().map(({ buildType, col, row }) => ({ buildType, col, row })); }
+  clearPlacements() {
+    this.placements.forEach((p) => { if (p.visualObject && p.visualObject.active) p.visualObject.destroy(); p.active = false; });
+    this.placements = []; this.occupiedCells.clear();
+  }
+  restoreState(walls) {
+    if (!Array.isArray(walls)) return false; const cells = new Set();
+    for (const wall of walls) {
+      const key = wall && `${wall.col},${wall.row}`;
+      if (!wall || !BuildCatalog[wall.buildType] || !Number.isInteger(wall.col) || !Number.isInteger(wall.row)
+        || !this.worldGrid.isInside(wall.col, wall.row) || cells.has(key)) return false;
+      cells.add(key);
+    }
+    this.clearPlacements(); const previousType = this.buildType; const previousActive = this.active;
+    walls.forEach((wall) => { this.active = true; this.buildType = wall.buildType; this.place(wall.col, wall.row); });
+    this.active = previousActive; this.buildType = previousType; if (!this.active) this.previewObject.setVisible(false); return true;
+  }
+
   clear() {
     if (this.destroyed) return;
     this.destroyed = true;
     this.exitMode();
-    this.placements.forEach((placement) => {
-      if (placement.visualObject && placement.visualObject.active) placement.visualObject.destroy();
-      placement.active = false;
-    });
-    this.placements = [];
-    this.occupiedCells.clear();
+    this.clearPlacements();
     if (this.previewObject && this.previewObject.active) this.previewObject.destroy();
     this.previewObject = null;
   }

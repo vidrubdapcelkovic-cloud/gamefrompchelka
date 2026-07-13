@@ -24,6 +24,8 @@ class GameScene extends Phaser.Scene {
     this.inventoryModel = new InventoryModel();
     this.craftingModel = new CraftingModel(this.inventoryModel);
     this.playerStatsModel = new PlayerStatsModel();
+    this.saveSystem = new SaveSystem();
+    this.isApplyingSave = false;
     this.isDeathHandled = false;
     this.createWorld();
     this.createPlayer();
@@ -40,6 +42,7 @@ class GameScene extends Phaser.Scene {
     this.createSurvivalInterface();
     this.createBuildingInterface();
     this.createCombatInterface();
+    this.createSaveInterface();
     this.registerLifecycleHandlers();
   }
 
@@ -269,7 +272,9 @@ class GameScene extends Phaser.Scene {
     this.groundItemSystem = new GroundItemSystem(this, {
       WOOD: 'temporary-ground-wood',
       STONE: 'temporary-ground-stone',
-      BERRIES: 'temporary-ground-berries'
+      BERRIES: 'temporary-ground-berries',
+      STONE_AXE: 'temporary-stone-axe',
+      STONE_PICKAXE: 'temporary-stone-pickaxe'
     });
 
     FixedWorldObjects.forEach((objectData) => {
@@ -420,7 +425,7 @@ class GameScene extends Phaser.Scene {
         throw new Error(`Недопустимая клетка появления слизня (${col}, ${row}).`);
       }
       const position = this.worldGrid.cellToWorldCenter(col, row);
-      this.creatureSystem.spawn('SLIME', position.x, position.y);
+      this.creatureSystem.spawn('SLIME', position.x, position.y, `SLIME_${col}_${row}`);
     });
     this.creatureMapCollider = this.physics.add.collider(this.creatureSystem.group, this.surfaceLayer);
     this.creatureObstacleCollider = this.physics.add.collider(
@@ -636,6 +641,8 @@ class GameScene extends Phaser.Scene {
     this.placeBuildKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER);
     this.cancelBuildKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
     this.attackKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+    this.saveKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.K);
+    this.loadKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.L);
   }
 
   createVirtualJoystick() {
@@ -882,19 +889,35 @@ class GameScene extends Phaser.Scene {
     this.targetMarker.setVisible(false);
     this.hideHoldProgress();
 
-    if (runtimeObject.visualObject && runtimeObject.visualObject.active) {
-      runtimeObject.visualObject.destroy();
-    }
-    if (runtimeObject.blockerObject
-      && runtimeObject.blockerObject !== runtimeObject.visualObject
-      && runtimeObject.blockerObject.active) {
-      runtimeObject.blockerObject.destroy();
-    }
-    this.runtimeWorldObjects.delete(runtimeObject.id);
+    this.setRuntimeWorldObjectActive(runtimeObject, false);
 
     const drop = WORLD_OBJECT_DROPS[runtimeObject.type];
     this.groundItemSystem.spawn(drop.itemType, drop.quantity, position.x, position.y);
     this.showInteractionMessage(`${drop.itemType} ×${drop.quantity}`);
+  }
+
+  setRuntimeWorldObjectActive(runtimeObject, active) {
+    runtimeObject.active = active;
+    if (runtimeObject.visualObject && runtimeObject.visualObject.active) {
+      runtimeObject.visualObject.setVisible(active);
+    }
+    if (runtimeObject.blockerObject && runtimeObject.blockerObject.body) {
+      runtimeObject.blockerObject.body.enable = active;
+      if (runtimeObject.blockerObject === runtimeObject.visualObject) {
+        runtimeObject.blockerObject.setVisible(active);
+      }
+    }
+  }
+
+  restoreRemovedWorldObjects(removedIds) {
+    const removed = new Set(removedIds);
+    const targets = [];
+    this.runtimeWorldObjects.forEach((object) => {
+      this.setRuntimeWorldObjectActive(object, !removed.has(object.id));
+      if (object.active) targets.push(object.interactionTarget);
+    });
+    this.interactionTargets = targets;
+    this.interactionSystem.setTargets(targets);
   }
 
   showInteractionMessage(message) {
@@ -1171,6 +1194,109 @@ class GameScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.cleanupSurvivalInterface, this);
     this.events.once(Phaser.Scenes.Events.DESTROY, this.cleanupSurvivalInterface, this);
     this.positionUseButton();
+  }
+
+  createSaveState() {
+    const stats = this.playerStatsModel.exportState();
+    return { version: 1, savedAt: Date.now(), player: { x: this.player.x, y: this.player.y, ...stats },
+      inventory: { activeHotbarIndex: this.inventoryUI.getActiveHotbarIndex(), slots: this.inventoryModel.exportState() },
+      world: {
+        removedObjectIds: Array.from(this.runtimeWorldObjects.values()).filter((o) => !o.active).map((o) => o.id),
+        groundItems: this.groundItemSystem.exportState(), walls: this.buildingSystem.exportState(),
+        deadCreatureIds: this.creatureSystem.exportState()
+      } };
+  }
+
+  prepareForSaveOperation() {
+    this.cancelInteractionHold(); this.exitBuildMode();
+    if (this.inventoryUI.isOpen) this.inventoryUI.closePanel();
+    if (this.craftingUI.isOpen) this.craftingUI.closePanel();
+    this.player.setVelocity(0, 0); this.resetAttackButton(); this.resetUseButton();
+  }
+
+  saveGame() {
+    if (this.isApplyingSave) return false;
+    if (this.isDeathHandled) { this.showInteractionMessage('Нельзя сохраняться после смерти'); return false; }
+    this.prepareForSaveOperation();
+    const result = this.saveSystem.save(this.createSaveState());
+    this.showInteractionMessage(result.success ? 'Игра сохранена' : 'Ошибка локального хранилища');
+    return result.success;
+  }
+
+  isSavedPositionValid(x, y) {
+    const cell = this.worldGrid.worldToCell(x, y);
+    if (!cell || !this.worldGrid.isWalkable(cell.col, cell.row)) return false;
+    if (this.buildingSystem.isOccupied(cell.col, cell.row)) return false;
+    return !Array.from(this.runtimeWorldObjects.values()).some(
+      (o) => o.active && o.blockerObject && o.col === cell.col && o.row === cell.row
+    );
+  }
+
+  findSafePlayerPosition(x, y) {
+    if (this.isSavedPositionValid(x, y)) return { x, y };
+    const start = FixedMapData.playerStart;
+    const cells = [];
+    for (let row = 0; row < this.worldGrid.rows; row += 1) for (let col = 0; col < this.worldGrid.columns; col += 1) {
+      cells.push({ col, row, distance: Math.abs(col - start.col) + Math.abs(row - start.row) });
+    }
+    cells.sort((a, b) => a.distance - b.distance || a.row - b.row || a.col - b.col);
+    for (const cell of cells) {
+      const p = this.worldGrid.cellToWorldCenter(cell.col, cell.row);
+      if (this.isSavedPositionValid(p.x, p.y)) return p;
+    }
+    throw new Error('Не найдена допустимая позиция игрока.');
+  }
+
+  applySaveState(state) {
+    if (!this.inventoryModel.importState(state.inventory.slots)
+      || !this.playerStatsModel.importState(state.player)) throw new Error('Ошибка импорта сохранения.');
+    this.restoreRemovedWorldObjects(state.world.removedObjectIds);
+    if (!this.groundItemSystem.restoreState(state.world.groundItems)
+      || !this.buildingSystem.restoreState(state.world.walls)
+      || !this.creatureSystem.restoreState(state.world.deadCreatureIds)) throw new Error('Ошибка импорта сохранения.');
+    const position = this.findSafePlayerPosition(state.player.x, state.player.y);
+    this.player.setPosition(position.x, position.y); this.player.body.reset(position.x, position.y);
+    this.inventoryUI.setActiveQuickSlot(state.inventory.activeHotbarIndex);
+    this.isDeathHandled = this.playerStatsModel.isDead();
+    this.deathText.setVisible(this.isDeathHandled);
+    this.inventoryUI.updateFromModel(); this.updateInventoryHud();
+    this.statusHUD.update(this.playerStatsModel.getHealth(), this.playerStatsModel.getHunger());
+  }
+
+  loadGame() {
+    if (this.isApplyingSave) return false;
+    const loaded = this.saveSystem.load();
+    if (!loaded.success) {
+      const messages = { notFound: 'Сохранение не найдено', invalidData: 'Сохранение повреждено', storageError: 'Ошибка локального хранилища' };
+      this.showInteractionMessage(messages[loaded.reason]); return false;
+    }
+    const rollback = this.createSaveState(); this.isApplyingSave = true;
+    try { this.prepareForSaveOperation(); this.applySaveState(loaded.state); this.showInteractionMessage('Игра загружена'); return true; }
+    catch { try { this.applySaveState(rollback); } catch {} this.showInteractionMessage('Сохранение повреждено'); return false; }
+    finally { this.isApplyingSave = false; }
+  }
+
+  createSaveInterface() {
+    this.savePointers = { save: null, load: null }; this.saveNativePointers = { save: null, load: null };
+    const make = (label, x, y) => ({ button: this.add.circle(x, y, 25, 0x35536b, 0.9).setStrokeStyle(2, 0xcbe9ff, .8).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 12).setInteractive(),
+      text: this.add.text(x, y, label, { fontFamily: 'Arial, sans-serif', fontSize: '10px', fontStyle: 'bold', color: '#fff' }).setOrigin(.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 13) });
+    this.saveControl = make('SAVE', 450, 42); this.loadControl = make('LOAD', 520, 42);
+    const bind = (name, control, action) => { control.handler = (pointer, lx, ly, event) => { if (event?.stopPropagation) event.stopPropagation(); if (this.savePointers[name] !== null || this.isApplyingSave) return; this.savePointers[name] = pointer.id; this.saveNativePointers[name] = pointer.event?.pointerId ?? null; action.call(this); }; control.button.on('pointerdown', control.handler); };
+    bind('save', this.saveControl, this.saveGame); bind('load', this.loadControl, this.loadGame);
+    this.onSavePointerUp = (pointer) => { for (const n of ['save','load']) if (this.savePointers[n] === pointer.id) this.savePointers[n] = this.saveNativePointers[n] = null; };
+    this.onSaveWindowUp = (event) => { for (const n of ['save','load']) if (this.saveNativePointers[n] === event.pointerId) this.savePointers[n] = this.saveNativePointers[n] = null; };
+    this.onSaveBlur = () => { this.savePointers.save = this.savePointers.load = this.saveNativePointers.save = this.saveNativePointers.load = null; };
+    this.onSaveVisibility = () => { if (document.hidden) this.onSaveBlur(); };
+    this.input.on('pointerup', this.onSavePointerUp); this.input.on('pointerupoutside', this.onSavePointerUp); window.addEventListener('pointerup', this.onSaveWindowUp); window.addEventListener('pointercancel', this.onSaveWindowUp); window.addEventListener('blur', this.onSaveBlur); document.addEventListener('visibilitychange', this.onSaveVisibility);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.cleanupSaveInterface, this); this.events.once(Phaser.Scenes.Events.DESTROY, this.cleanupSaveInterface, this);
+  }
+
+  cleanupSaveInterface() {
+    if (!this.saveControl) return; this.isApplyingSave = false;
+    this.saveControl.button.off('pointerdown', this.saveControl.handler); this.loadControl.button.off('pointerdown', this.loadControl.handler);
+    this.input.off('pointerup', this.onSavePointerUp); this.input.off('pointerupoutside', this.onSavePointerUp); window.removeEventListener('pointerup', this.onSaveWindowUp); window.removeEventListener('pointercancel', this.onSaveWindowUp); window.removeEventListener('blur', this.onSaveBlur); document.removeEventListener('visibilitychange', this.onSaveVisibility);
+    this.events.off(Phaser.Scenes.Events.SHUTDOWN, this.cleanupSaveInterface, this); this.events.off(Phaser.Scenes.Events.DESTROY, this.cleanupSaveInterface, this);
+    [this.saveControl.button,this.saveControl.text,this.loadControl.button,this.loadControl.text].forEach((o)=>{if(o.active)o.destroy();}); this.saveControl = this.loadControl = null;
   }
 
   createCombatInterface() {
@@ -1670,6 +1796,7 @@ class GameScene extends Phaser.Scene {
 
   update(time, delta) {
     if (this.survivalCleanupDone || !this.playerStatsModel) return;
+    if (this.isApplyingSave) return;
     const statsDelta = Math.min(Math.max(Number.isFinite(delta) ? delta : 0, 0), 250);
     this.playerStatsModel.update(statsDelta);
     this.statusHUD.update(
@@ -1687,6 +1814,8 @@ class GameScene extends Phaser.Scene {
       this.playerStatsModel.getHunger()
     );
     if (this.playerStatsModel.isDead()) this.handlePlayerDeath();
+    if (Phaser.Input.Keyboard.JustDown(this.saveKey)) this.saveGame();
+    if (Phaser.Input.Keyboard.JustDown(this.loadKey)) this.loadGame();
     if (this.isDeathHandled) {
       this.player.setVelocity(0, 0);
       return;
