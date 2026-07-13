@@ -92,6 +92,7 @@ const autonomousHtml = `<!doctype html>
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+    <link rel="icon" href="data:,">
     <title>Прототип выживалки — автономная версия</title>
     <style>\n${pageCss}    </style>
   </head>
@@ -132,6 +133,7 @@ const pagesHtml = `<!doctype html>
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+    <link rel="icon" href="data:,">
     <title>Прототип выживалки</title>
     <link rel="stylesheet" href="./styles/game.css">
   </head>

@@ -1,10 +1,11 @@
 class CraftingUI {
-  constructor(scene, craftingModel, onOpenChanged, onCraftResult, canOpenPanel) {
+  constructor(scene, craftingModel, onOpenChanged, onCraftResult, canOpenPanel, textureKeys) {
     this.scene = scene;
     this.craftingModel = craftingModel;
     this.onOpenChanged = onOpenChanged;
     this.onCraftResult = onCraftResult;
     this.canOpenPanel = canOpenPanel || (() => true);
+    this.textureKeys = textureKeys;
     this.recipeIds = Object.keys(RecipeCatalog);
     this.selectedRecipeId = this.recipeIds[0];
     this.isOpen = false;
@@ -23,10 +24,10 @@ class CraftingUI {
   }
 
   createPanel() {
-    this.panelBackground = this.scene.add.rectangle(480, 270, 440, 310, 0x0d141b, 0.96)
+    this.panelBackground = this.scene.add.rectangle(480, 270, 460, 420, 0x0d141b, 0.96)
       .setScrollFactor(0).setDepth(INTERFACE_DEPTH + 35)
       .setStrokeStyle(3, 0xbad5e8, 0.75).setInteractive();
-    this.panelTitle = this.scene.add.text(480, 142, 'Крафт', {
+    this.panelTitle = this.scene.add.text(480, 92, 'Крафт', {
       fontFamily: 'Arial, sans-serif', fontSize: '26px', fontStyle: 'bold', color: '#ffffff'
     }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 36);
     this.elements.push(this.panelBackground, this.panelTitle);
@@ -40,40 +41,44 @@ class CraftingUI {
 
     this.recipeIds.forEach((recipeId, index) => {
       const recipe = RecipeCatalog[recipeId];
-      const y = 205 + index * 76;
-      const background = this.scene.add.rectangle(480, y, 380, 62, 0x1b2731, 0.96)
+      const textureKey = this.textureKeys && this.textureKeys[recipe.result.itemType];
+      if (!textureKey) throw new Error(`Нельзя отобразить результат крафта: ${recipe.result.itemType}.`);
+      const y = 160 + index * 76;
+      const background = this.scene.add.rectangle(480, y, 410, 62, 0x1b2731, 0.96)
         .setScrollFactor(0).setDepth(INTERFACE_DEPTH + 37)
         .setStrokeStyle(2, 0x78909f, 0.8).setInteractive();
       const ingredientsText = recipe.ingredients
         .map((ingredient) => `${ingredient.itemType} ×${ingredient.quantity}`)
         .join('  ');
-      const text = this.scene.add.text(310, y - 20, `${recipe.displayName}\n${ingredientsText}`, {
+      const text = this.scene.add.text(290, y - 20, `${recipe.displayName}\n${ingredientsText}`, {
         fontFamily: 'Arial, sans-serif', fontSize: '17px', color: '#ffffff', lineSpacing: 5
       }).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 38);
+      const resultIcon = this.scene.add.image(620, y, textureKey)
+        .setScrollFactor(0).setDepth(INTERFACE_DEPTH + 38);
       const resultText = this.scene.add.text(
-        650,
+        680,
         y,
-        `→ ${recipe.result.itemType} ×${recipe.result.quantity}`,
+        `→ ×${recipe.result.quantity}`,
         {
         fontFamily: 'Arial, sans-serif', fontSize: '17px', color: '#fff4b0'
         }
       ).setOrigin(1, 0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 38);
-      const row = { recipeId, background, text, resultText };
+      const row = { recipeId, background, text, resultIcon, resultText };
       row.onPointerDown = (pointer, localX, localY, event) => {
         if (event && event.stopPropagation) event.stopPropagation();
         this.selectRecipe(recipeId);
       };
       background.on('pointerdown', row.onPointerDown);
       this.recipeRows.push(row);
-      this.elements.push(background, text, resultText);
-      this.panelElements.push(background, text, resultText);
+      this.elements.push(background, text, resultIcon, resultText);
+      this.panelElements.push(background, text, resultIcon, resultText);
       this.interactivePanelElements.push(background);
     });
 
-    this.createButton = this.scene.add.rectangle(480, 370, 180, 48, 0x3f8f5b, 0.95)
+    this.createButton = this.scene.add.rectangle(480, 420, 180, 48, 0x3f8f5b, 0.95)
       .setScrollFactor(0).setDepth(INTERFACE_DEPTH + 37)
       .setStrokeStyle(2, 0xd9ffe3, 0.9).setInteractive();
-    this.createButtonText = this.scene.add.text(480, 370, 'Создать', {
+    this.createButtonText = this.scene.add.text(480, 420, 'Создать', {
       fontFamily: 'Arial, sans-serif', fontSize: '20px', fontStyle: 'bold', color: '#ffffff'
     }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 38);
     this.onCreatePointerDown = (pointer, localX, localY, event) => {

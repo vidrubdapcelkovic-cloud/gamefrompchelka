@@ -11,6 +11,15 @@ const INTERFACE_DEPTH = 2000;
 const GROUND_ITEM_PICKUP_RADIUS = 28;
 const BUILDING_DISMANTLE_DURATION_MS = 600;
 const PLAYER_MELEE_ATTACK = Object.freeze({ damage: 10, radius: 52, cooldownMs: 450 });
+const ITEM_TEXTURE_KEYS = Object.freeze({
+  WOOD: 'temporary-ground-wood',
+  STONE: 'temporary-ground-stone',
+  SLIME_GEL: 'temporary-slime-gel',
+  BERRIES: 'temporary-ground-berries',
+  STONE_AXE: 'temporary-stone-axe',
+  STONE_PICKAXE: 'temporary-stone-pickaxe',
+  STONE_SWORD: 'temporary-stone-sword'
+});
 const SLIME_SPAWN_CELLS = Object.freeze([
   Object.freeze({ col: 8, row: 8 }), Object.freeze({ col: 39, row: 8 }),
   Object.freeze({ col: 8, row: 28 }), Object.freeze({ col: 39, row: 28 })
@@ -323,14 +332,7 @@ class GameScene extends Phaser.Scene {
     this.interactionTargets = [];
     this.runtimeWorldObjects = new Map();
     this.blockingWorldObjects = this.physics.add.staticGroup();
-    this.groundItemSystem = new GroundItemSystem(this, {
-      WOOD: 'temporary-ground-wood',
-      STONE: 'temporary-ground-stone',
-      SLIME_GEL: 'temporary-slime-gel',
-      BERRIES: 'temporary-ground-berries',
-      STONE_AXE: 'temporary-stone-axe',
-      STONE_PICKAXE: 'temporary-stone-pickaxe'
-    });
+    this.groundItemSystem = new GroundItemSystem(this, ITEM_TEXTURE_KEYS);
 
     FixedWorldObjects.forEach((objectData) => {
       const position = this.worldGrid.cellToWorldCenter(objectData.col, objectData.row);
@@ -653,6 +655,15 @@ class GameScene extends Phaser.Scene {
         graphics.fillRect(3, 2, 14, 4);
         graphics.fillRect(2, 4, 4, 3);
         graphics.fillRect(15, 4, 3, 3);
+      }],
+      ['temporary-stone-sword', 0x8c613c, (graphics) => {
+        graphics.fillRect(9, 13, 3, 6);
+        graphics.fillStyle(0x6b452b, 1);
+        graphics.fillRect(8, 17, 5, 2);
+        graphics.fillStyle(0xaab2ba, 1);
+        graphics.fillRect(5, 11, 11, 3);
+        graphics.fillRect(8, 3, 5, 9);
+        graphics.fillRect(9, 1, 3, 2);
       }]
     ];
 
@@ -1259,14 +1270,7 @@ class GameScene extends Phaser.Scene {
     this.inventoryUI = new InventoryUI(
       this,
       this.inventoryModel,
-      {
-        WOOD: 'temporary-ground-wood',
-        STONE: 'temporary-ground-stone',
-        SLIME_GEL: 'temporary-slime-gel',
-        BERRIES: 'temporary-ground-berries',
-        STONE_AXE: 'temporary-stone-axe',
-        STONE_PICKAXE: 'temporary-stone-pickaxe'
-      },
+      ITEM_TEXTURE_KEYS,
       (isOpen) => this.handleInventoryOpenChanged(isOpen),
       () => this.canOpenPanel(),
       () => this.canSelectHotbarSlot()
@@ -1279,7 +1283,8 @@ class GameScene extends Phaser.Scene {
       this.craftingModel,
       (isOpen) => this.handleCraftingOpenChanged(isOpen),
       (result, recipe) => this.handleCraftResult(result, recipe),
-      () => this.canOpenPanel()
+      () => this.canOpenPanel(),
+      ITEM_TEXTURE_KEYS
     );
   }
 
@@ -1581,6 +1586,19 @@ class GameScene extends Phaser.Scene {
     else this.player.clearTint();
   }
 
+  getPlayerAttackDamage() {
+    const slotIndex = this.inventoryUI.getActiveHotbarIndex();
+    const slot = this.inventoryModel.getSlot(slotIndex);
+    if (slot === null) return PLAYER_MELEE_ATTACK.damage;
+    const item = ItemCatalog[slot.itemType];
+    return item
+      && item.category === 'WEAPON'
+      && Number.isFinite(item.attackDamage)
+      && item.attackDamage > 0
+      ? item.attackDamage
+      : PLAYER_MELEE_ATTACK.damage;
+  }
+
   tryPlayerAttack() {
     const time = this.getCombatTime();
     if (!this.canAttack() || time - this.lastPlayerAttackTime < PLAYER_MELEE_ATTACK.cooldownMs) {
@@ -1595,7 +1613,8 @@ class GameScene extends Phaser.Scene {
     const deathY = target.sprite.y;
     const creatureDefinition = CreatureCatalog[target.type];
     const loot = creatureDefinition ? creatureDefinition.loot : null;
-    const result = this.creatureSystem.damage(target.id, PLAYER_MELEE_ATTACK.damage);
+    const actualDamage = this.getPlayerAttackDamage();
+    const result = this.creatureSystem.damage(target.id, actualDamage);
     if (result.damage > 0) {
       const displayName = creatureDefinition.displayName;
       if (result.died) {

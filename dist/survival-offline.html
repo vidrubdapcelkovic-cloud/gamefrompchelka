@@ -3,6 +3,7 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+    <link rel="icon" href="data:,">
     <title>Прототип выживалки — автономная версия</title>
     <style>
 html,
@@ -162,6 +163,14 @@ const ItemCatalog = Object.freeze({
     toolType: 'PICKAXE',
     effectiveAgainst: 'ROCK',
     actionDurationMs: 850
+  }),
+  STONE_SWORD: Object.freeze({
+    id: 'STONE_SWORD',
+    displayName: 'Каменный меч',
+    maxStack: 1,
+    category: 'WEAPON',
+    consumable: false,
+    attackDamage: 15
   })
 });
 
@@ -183,6 +192,15 @@ const RecipeCatalog = Object.freeze({
       Object.freeze({ itemType: 'STONE', quantity: 3 })
     ]),
     result: Object.freeze({ itemType: 'STONE_PICKAXE', quantity: 1 })
+  }),
+  STONE_SWORD: Object.freeze({
+    id: 'STONE_SWORD',
+    displayName: 'Каменный меч',
+    ingredients: Object.freeze([
+      Object.freeze({ itemType: 'WOOD', quantity: 1 }),
+      Object.freeze({ itemType: 'STONE', quantity: 2 })
+    ]),
+    result: Object.freeze({ itemType: 'STONE_SWORD', quantity: 1 })
   })
 });
 
@@ -1621,12 +1639,13 @@ class InventoryUI {
 }
 
 class CraftingUI {
-  constructor(scene, craftingModel, onOpenChanged, onCraftResult, canOpenPanel) {
+  constructor(scene, craftingModel, onOpenChanged, onCraftResult, canOpenPanel, textureKeys) {
     this.scene = scene;
     this.craftingModel = craftingModel;
     this.onOpenChanged = onOpenChanged;
     this.onCraftResult = onCraftResult;
     this.canOpenPanel = canOpenPanel || (() => true);
+    this.textureKeys = textureKeys;
     this.recipeIds = Object.keys(RecipeCatalog);
     this.selectedRecipeId = this.recipeIds[0];
     this.isOpen = false;
@@ -1645,10 +1664,10 @@ class CraftingUI {
   }
 
   createPanel() {
-    this.panelBackground = this.scene.add.rectangle(480, 270, 440, 310, 0x0d141b, 0.96)
+    this.panelBackground = this.scene.add.rectangle(480, 270, 460, 420, 0x0d141b, 0.96)
       .setScrollFactor(0).setDepth(INTERFACE_DEPTH + 35)
       .setStrokeStyle(3, 0xbad5e8, 0.75).setInteractive();
-    this.panelTitle = this.scene.add.text(480, 142, 'Крафт', {
+    this.panelTitle = this.scene.add.text(480, 92, 'Крафт', {
       fontFamily: 'Arial, sans-serif', fontSize: '26px', fontStyle: 'bold', color: '#ffffff'
     }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 36);
     this.elements.push(this.panelBackground, this.panelTitle);
@@ -1662,40 +1681,44 @@ class CraftingUI {
 
     this.recipeIds.forEach((recipeId, index) => {
       const recipe = RecipeCatalog[recipeId];
-      const y = 205 + index * 76;
-      const background = this.scene.add.rectangle(480, y, 380, 62, 0x1b2731, 0.96)
+      const textureKey = this.textureKeys && this.textureKeys[recipe.result.itemType];
+      if (!textureKey) throw new Error(`Нельзя отобразить результат крафта: ${recipe.result.itemType}.`);
+      const y = 160 + index * 76;
+      const background = this.scene.add.rectangle(480, y, 410, 62, 0x1b2731, 0.96)
         .setScrollFactor(0).setDepth(INTERFACE_DEPTH + 37)
         .setStrokeStyle(2, 0x78909f, 0.8).setInteractive();
       const ingredientsText = recipe.ingredients
         .map((ingredient) => `${ingredient.itemType} ×${ingredient.quantity}`)
         .join('  ');
-      const text = this.scene.add.text(310, y - 20, `${recipe.displayName}\n${ingredientsText}`, {
+      const text = this.scene.add.text(290, y - 20, `${recipe.displayName}\n${ingredientsText}`, {
         fontFamily: 'Arial, sans-serif', fontSize: '17px', color: '#ffffff', lineSpacing: 5
       }).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 38);
+      const resultIcon = this.scene.add.image(620, y, textureKey)
+        .setScrollFactor(0).setDepth(INTERFACE_DEPTH + 38);
       const resultText = this.scene.add.text(
-        650,
+        680,
         y,
-        `→ ${recipe.result.itemType} ×${recipe.result.quantity}`,
+        `→ ×${recipe.result.quantity}`,
         {
         fontFamily: 'Arial, sans-serif', fontSize: '17px', color: '#fff4b0'
         }
       ).setOrigin(1, 0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 38);
-      const row = { recipeId, background, text, resultText };
+      const row = { recipeId, background, text, resultIcon, resultText };
       row.onPointerDown = (pointer, localX, localY, event) => {
         if (event && event.stopPropagation) event.stopPropagation();
         this.selectRecipe(recipeId);
       };
       background.on('pointerdown', row.onPointerDown);
       this.recipeRows.push(row);
-      this.elements.push(background, text, resultText);
-      this.panelElements.push(background, text, resultText);
+      this.elements.push(background, text, resultIcon, resultText);
+      this.panelElements.push(background, text, resultIcon, resultText);
       this.interactivePanelElements.push(background);
     });
 
-    this.createButton = this.scene.add.rectangle(480, 370, 180, 48, 0x3f8f5b, 0.95)
+    this.createButton = this.scene.add.rectangle(480, 420, 180, 48, 0x3f8f5b, 0.95)
       .setScrollFactor(0).setDepth(INTERFACE_DEPTH + 37)
       .setStrokeStyle(2, 0xd9ffe3, 0.9).setInteractive();
-    this.createButtonText = this.scene.add.text(480, 370, 'Создать', {
+    this.createButtonText = this.scene.add.text(480, 420, 'Создать', {
       fontFamily: 'Arial, sans-serif', fontSize: '20px', fontStyle: 'bold', color: '#ffffff'
     }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 38);
     this.onCreatePointerDown = (pointer, localX, localY, event) => {
@@ -2011,6 +2034,15 @@ const INTERFACE_DEPTH = 2000;
 const GROUND_ITEM_PICKUP_RADIUS = 28;
 const BUILDING_DISMANTLE_DURATION_MS = 600;
 const PLAYER_MELEE_ATTACK = Object.freeze({ damage: 10, radius: 52, cooldownMs: 450 });
+const ITEM_TEXTURE_KEYS = Object.freeze({
+  WOOD: 'temporary-ground-wood',
+  STONE: 'temporary-ground-stone',
+  SLIME_GEL: 'temporary-slime-gel',
+  BERRIES: 'temporary-ground-berries',
+  STONE_AXE: 'temporary-stone-axe',
+  STONE_PICKAXE: 'temporary-stone-pickaxe',
+  STONE_SWORD: 'temporary-stone-sword'
+});
 const SLIME_SPAWN_CELLS = Object.freeze([
   Object.freeze({ col: 8, row: 8 }), Object.freeze({ col: 39, row: 8 }),
   Object.freeze({ col: 8, row: 28 }), Object.freeze({ col: 39, row: 28 })
@@ -2323,14 +2355,7 @@ class GameScene extends Phaser.Scene {
     this.interactionTargets = [];
     this.runtimeWorldObjects = new Map();
     this.blockingWorldObjects = this.physics.add.staticGroup();
-    this.groundItemSystem = new GroundItemSystem(this, {
-      WOOD: 'temporary-ground-wood',
-      STONE: 'temporary-ground-stone',
-      SLIME_GEL: 'temporary-slime-gel',
-      BERRIES: 'temporary-ground-berries',
-      STONE_AXE: 'temporary-stone-axe',
-      STONE_PICKAXE: 'temporary-stone-pickaxe'
-    });
+    this.groundItemSystem = new GroundItemSystem(this, ITEM_TEXTURE_KEYS);
 
     FixedWorldObjects.forEach((objectData) => {
       const position = this.worldGrid.cellToWorldCenter(objectData.col, objectData.row);
@@ -2653,6 +2678,15 @@ class GameScene extends Phaser.Scene {
         graphics.fillRect(3, 2, 14, 4);
         graphics.fillRect(2, 4, 4, 3);
         graphics.fillRect(15, 4, 3, 3);
+      }],
+      ['temporary-stone-sword', 0x8c613c, (graphics) => {
+        graphics.fillRect(9, 13, 3, 6);
+        graphics.fillStyle(0x6b452b, 1);
+        graphics.fillRect(8, 17, 5, 2);
+        graphics.fillStyle(0xaab2ba, 1);
+        graphics.fillRect(5, 11, 11, 3);
+        graphics.fillRect(8, 3, 5, 9);
+        graphics.fillRect(9, 1, 3, 2);
       }]
     ];
 
@@ -3259,14 +3293,7 @@ class GameScene extends Phaser.Scene {
     this.inventoryUI = new InventoryUI(
       this,
       this.inventoryModel,
-      {
-        WOOD: 'temporary-ground-wood',
-        STONE: 'temporary-ground-stone',
-        SLIME_GEL: 'temporary-slime-gel',
-        BERRIES: 'temporary-ground-berries',
-        STONE_AXE: 'temporary-stone-axe',
-        STONE_PICKAXE: 'temporary-stone-pickaxe'
-      },
+      ITEM_TEXTURE_KEYS,
       (isOpen) => this.handleInventoryOpenChanged(isOpen),
       () => this.canOpenPanel(),
       () => this.canSelectHotbarSlot()
@@ -3279,7 +3306,8 @@ class GameScene extends Phaser.Scene {
       this.craftingModel,
       (isOpen) => this.handleCraftingOpenChanged(isOpen),
       (result, recipe) => this.handleCraftResult(result, recipe),
-      () => this.canOpenPanel()
+      () => this.canOpenPanel(),
+      ITEM_TEXTURE_KEYS
     );
   }
 
@@ -3581,6 +3609,19 @@ class GameScene extends Phaser.Scene {
     else this.player.clearTint();
   }
 
+  getPlayerAttackDamage() {
+    const slotIndex = this.inventoryUI.getActiveHotbarIndex();
+    const slot = this.inventoryModel.getSlot(slotIndex);
+    if (slot === null) return PLAYER_MELEE_ATTACK.damage;
+    const item = ItemCatalog[slot.itemType];
+    return item
+      && item.category === 'WEAPON'
+      && Number.isFinite(item.attackDamage)
+      && item.attackDamage > 0
+      ? item.attackDamage
+      : PLAYER_MELEE_ATTACK.damage;
+  }
+
   tryPlayerAttack() {
     const time = this.getCombatTime();
     if (!this.canAttack() || time - this.lastPlayerAttackTime < PLAYER_MELEE_ATTACK.cooldownMs) {
@@ -3595,7 +3636,8 @@ class GameScene extends Phaser.Scene {
     const deathY = target.sprite.y;
     const creatureDefinition = CreatureCatalog[target.type];
     const loot = creatureDefinition ? creatureDefinition.loot : null;
-    const result = this.creatureSystem.damage(target.id, PLAYER_MELEE_ATTACK.damage);
+    const actualDamage = this.getPlayerAttackDamage();
+    const result = this.creatureSystem.damage(target.id, actualDamage);
     if (result.damage > 0) {
       const displayName = creatureDefinition.displayName;
       if (result.died) {

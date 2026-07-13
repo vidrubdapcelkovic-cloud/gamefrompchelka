@@ -35,5 +35,13 @@ const ItemCatalog = Object.freeze({
     toolType: 'PICKAXE',
     effectiveAgainst: 'ROCK',
     actionDurationMs: 850
+  }),
+  STONE_SWORD: Object.freeze({
+    id: 'STONE_SWORD',
+    displayName: 'Каменный меч',
+    maxStack: 1,
+    category: 'WEAPON',
+    consumable: false,
+    attackDamage: 15
   })
 });
