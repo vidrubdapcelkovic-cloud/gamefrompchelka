@@ -112,11 +112,16 @@ class GameScene extends Phaser.Scene {
   canOpenPanel() {
     return !this.isApplyingSave
       && !this.isPlayerDead()
+      && !this.exitConfirmOpen
+      && !this.exitTransitionLocked
       && !(this.buildingSystem && this.buildingSystem.isActive());
   }
 
   canSelectHotbarSlot() {
-    return !this.isApplyingSave && !this.isPlayerDead();
+    return !this.isApplyingSave
+      && !this.isPlayerDead()
+      && !this.exitConfirmOpen
+      && !this.exitTransitionLocked;
   }
 
   canSave() {
@@ -1333,7 +1338,6 @@ class GameScene extends Phaser.Scene {
     if (this.runtimeWorldObjects) this.runtimeWorldObjects.clear();
     if (this.inventoryModel) {
       this.inventoryModel.clear();
-      if (this.inventoryUI && !this.inventoryUI.destroyed) this.inventoryUI.updateFromModel();
     }
     if (this.playerMapCollider) {
       this.playerMapCollider.destroy();
@@ -1672,6 +1676,8 @@ class GameScene extends Phaser.Scene {
   createMenuExitInterface() {
     this.exitConfirmOpen = false;
     this.exitTransitionLocked = false;
+    this.exitTransitionScheduled = false;
+    this.exitTransitionPostUpdateHandler = null;
     this.menuExitCleanupDone = false;
     const modalDepth = INTERFACE_DEPTH + 100;
     this.exitModalOverlay = this.add.rectangle(480, 270, 960, 540, 0x000000, 0.72)
@@ -1694,6 +1700,7 @@ class GameScene extends Phaser.Scene {
 
     this.onExitConfirmDown = (pointer, localX, localY, event) => {
       if (event && event.stopPropagation) event.stopPropagation();
+      if (this.exitTransitionLocked || this.exitTransitionScheduled) return;
       this.saveAndExitToMenu();
     };
     this.onExitCancelDown = (pointer, localX, localY, event) => {
@@ -1708,6 +1715,10 @@ class GameScene extends Phaser.Scene {
     if (this.exitConfirmOpen || this.exitTransitionLocked) return;
     this.exitConfirmOpen = true;
     this.cancelInteractionHold();
+    if (this.inventoryUI && this.inventoryUI.isOpen) this.inventoryUI.closePanel();
+    if (this.craftingUI && this.craftingUI.isOpen) this.craftingUI.closePanel();
+    this.closeChestPanel();
+    if (this.inventoryUI) this.inventoryUI.setInteractionBlocked(true);
     if (this.inputController) this.inputController.setGameControlsBlocked(true);
     if (this.player && this.player.body) this.player.setVelocity(0, 0);
     this.exitConfirmButton.setInteractive({ useHandCursor: true });
@@ -1732,8 +1743,53 @@ class GameScene extends Phaser.Scene {
     ].forEach((element) => this.children.bringToTop(element));
   }
 
+  disableExitModalInteractivity() {
+    if (this.exitConfirmButton) this.exitConfirmButton.disableInteractive();
+    if (this.exitCancelButton) this.exitCancelButton.disableInteractive();
+    if (this.exitConfirmText) this.exitConfirmText.disableInteractive();
+    if (this.exitCancelText) this.exitCancelText.disableInteractive();
+  }
+
+  enableExitModalInteractivity() {
+    if (!this.exitConfirmOpen || this.exitTransitionLocked || this.exitTransitionScheduled) return;
+    this.exitConfirmButton.setInteractive({ useHandCursor: true });
+    this.exitCancelButton.setInteractive({ useHandCursor: true });
+    this.exitConfirmText.setInteractive({ useHandCursor: true });
+    this.exitCancelText.setInteractive({ useHandCursor: true });
+  }
+
+  cancelExitTransitionSchedule() {
+    if (this.exitTransitionPostUpdateHandler) {
+      this.events.off(Phaser.Scenes.Events.POST_UPDATE, this.exitTransitionPostUpdateHandler, this);
+      this.exitTransitionPostUpdateHandler = null;
+    }
+    this.exitTransitionScheduled = false;
+  }
+
+  scheduleExitToMenu() {
+    if (this.exitTransitionScheduled || !this.sys || !this.sys.isActive()) return;
+    this.exitTransitionScheduled = true;
+    this.exitTransitionPostUpdateHandler = () => {
+      this.exitTransitionPostUpdateHandler = null;
+      if (!this.sys || !this.sys.isActive()) {
+        this.exitTransitionScheduled = false;
+        this.exitTransitionLocked = false;
+        this.enableExitModalInteractivity();
+        return;
+      }
+      if (!this.exitTransitionLocked || !this.exitTransitionScheduled) return;
+      this.scene.start('MenuScene');
+    };
+    this.events.once(
+      Phaser.Scenes.Events.POST_UPDATE,
+      this.exitTransitionPostUpdateHandler,
+      this
+    );
+  }
+
   hideExitConfirmation() {
     if (!this.exitConfirmOpen) return;
+    this.cancelExitTransitionSchedule();
     this.exitConfirmOpen = false;
     this.exitConfirmButton.disableInteractive();
     this.exitCancelButton.disableInteractive();
@@ -1744,13 +1800,14 @@ class GameScene extends Phaser.Scene {
     this.exitConfirmText.off('pointerdown', this.onExitConfirmDown);
     this.exitCancelText.off('pointerdown', this.onExitCancelDown);
     if (this.inputController) this.inputController.setGameControlsBlocked(false);
+    if (this.inventoryUI && !this.inventoryUI.destroyed) this.inventoryUI.setInteractionBlocked(false);
     [this.exitModalOverlay, this.exitModalPanel, this.exitModalText, this.exitConfirmButton,
       this.exitConfirmText, this.exitCancelButton, this.exitCancelText]
       .forEach((element) => element.setVisible(false));
   }
 
   saveAndExitToMenu() {
-    if (!this.exitConfirmOpen || this.exitTransitionLocked || this.isPlayerDead()) {
+    if (!this.exitConfirmOpen || this.exitTransitionLocked || this.exitTransitionScheduled || this.isPlayerDead()) {
       if (this.isPlayerDead()) {
         this.hideExitConfirmation();
         this.showInteractionMessage('Нельзя сохраняться после смерти');
@@ -1758,15 +1815,17 @@ class GameScene extends Phaser.Scene {
       return false;
     }
     this.exitTransitionLocked = true;
+    this.disableExitModalInteractivity();
     this.prepareForSaveOperation();
     const result = this.saveSystem.save(this.createSaveState());
     if (!result.success) {
       this.exitTransitionLocked = false;
-      this.hideExitConfirmation();
+      this.cancelExitTransitionSchedule();
+      this.enableExitModalInteractivity();
       this.showInteractionMessage('Ошибка локального хранилища');
       return false;
     }
-    this.scene.start('MenuScene');
+    this.scheduleExitToMenu();
     return true;
   }
 
@@ -1774,7 +1833,10 @@ class GameScene extends Phaser.Scene {
     if (this.menuExitCleanupDone) return;
     this.menuExitCleanupDone = true;
     this.exitConfirmOpen = false;
-    if (this.inputController) this.inputController.setGameControlsBlocked(false);
+    this.cancelExitTransitionSchedule();
+    if (this.inputController && !this.exitTransitionLocked) {
+      this.inputController.setGameControlsBlocked(false);
+    }
     if (this.exitConfirmButton) this.exitConfirmButton.off('pointerdown', this.onExitConfirmDown);
     if (this.exitCancelButton) this.exitCancelButton.off('pointerdown', this.onExitCancelDown);
     if (this.exitConfirmText) this.exitConfirmText.off('pointerdown', this.onExitConfirmDown);
@@ -2326,6 +2388,7 @@ class GameScene extends Phaser.Scene {
   }
 
   updateInventoryHud() {
+    if (!this.inventoryHudText || !this.inventoryHudText.active || !this.inventoryModel) return;
     this.inventoryHudText.setText(
       `WOOD: ${this.inventoryModel.getTotal('WOOD')}  `
       + `STONE: ${this.inventoryModel.getTotal('STONE')}  `

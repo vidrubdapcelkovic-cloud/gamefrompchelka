@@ -721,31 +721,41 @@ class InputController {
     this.resetTransientState();
     this.removeLifecycleHandlers();
 
+    const sceneInput = this.scene && this.scene.input;
+    const sceneScale = this.scene && this.scene.scale;
+    const sceneEvents = this.scene && this.scene.events;
+
     if (this.actionButton) {
       this.actionButton.off('pointerdown', this.onActionPointerDown);
       this.actionButton.off('pointerout', this.onActionPointerOut);
     }
-    this.scene.input.off('pointerup', this.onActionPointerEnd);
-    this.scene.input.off('pointerupoutside', this.onActionPointerEnd);
-    this.scene.scale.off('resize', this.onActionResize);
+    if (sceneInput) {
+      sceneInput.off('pointerup', this.onActionPointerEnd);
+      sceneInput.off('pointerupoutside', this.onActionPointerEnd);
+    }
+    if (sceneScale) sceneScale.off('resize', this.onActionResize);
     window.removeEventListener('pointerup', this.onActionWindowPointerEnd);
     window.removeEventListener('pointercancel', this.onActionWindowPointerEnd);
     window.removeEventListener('blur', this.onActionBlur);
     document.removeEventListener('visibilitychange', this.onActionVisibilityChange);
 
     if (this.useButton) this.useButton.off('pointerdown', this.onUsePointerDown);
-    this.scene.input.off('pointerup', this.onUsePointerEnd);
-    this.scene.input.off('pointerupoutside', this.onUsePointerEnd);
-    this.scene.scale.off('resize', this.onUseResize);
+    if (sceneInput) {
+      sceneInput.off('pointerup', this.onUsePointerEnd);
+      sceneInput.off('pointerupoutside', this.onUsePointerEnd);
+    }
+    if (sceneScale) sceneScale.off('resize', this.onUseResize);
     window.removeEventListener('pointerup', this.onUseWindowPointerEnd);
     window.removeEventListener('pointercancel', this.onUseWindowPointerEnd);
     window.removeEventListener('blur', this.onUseBlur);
     document.removeEventListener('visibilitychange', this.onUseVisibilityChange);
 
     if (this.attackButton) this.attackButton.off('pointerdown', this.onAttackPointerDown);
-    this.scene.input.off('pointerup', this.onAttackPointerEnd);
-    this.scene.input.off('pointerupoutside', this.onAttackPointerEnd);
-    this.scene.scale.off('resize', this.onAttackResize);
+    if (sceneInput) {
+      sceneInput.off('pointerup', this.onAttackPointerEnd);
+      sceneInput.off('pointerupoutside', this.onAttackPointerEnd);
+    }
+    if (sceneScale) sceneScale.off('resize', this.onAttackResize);
     window.removeEventListener('pointerup', this.onAttackWindowEnd);
     window.removeEventListener('pointercancel', this.onAttackWindowEnd);
     window.removeEventListener('blur', this.onAttackBlur);
@@ -753,31 +763,37 @@ class InputController {
 
     if (this.saveControl) this.saveControl.button.off('pointerdown', this.saveControl.handler);
     if (this.loadControl) this.loadControl.button.off('pointerdown', this.loadControl.handler);
-    this.scene.input.off('pointerup', this.onSavePointerUp);
-    this.scene.input.off('pointerupoutside', this.onSavePointerUp);
+    if (sceneInput) {
+      sceneInput.off('pointerup', this.onSavePointerUp);
+      sceneInput.off('pointerupoutside', this.onSavePointerUp);
+    }
     window.removeEventListener('pointerup', this.onSaveWindowUp);
     window.removeEventListener('pointercancel', this.onSaveWindowUp);
     window.removeEventListener('blur', this.onSaveBlur);
     document.removeEventListener('visibilitychange', this.onSaveVisibility);
 
     if (this.menuControl) this.menuControl.button.off('pointerdown', this.onMenuControlDown);
-    this.scene.scale.off('resize', this.onTopActionButtonsResize);
+    if (sceneScale) sceneScale.off('resize', this.onTopActionButtonsResize);
 
     if (this.buildToggleButton) this.buildToggleButton.off('pointerdown', this.onBuildTogglePointerDown);
     if (this.placeButton) this.placeButton.off('pointerdown', this.onPlacePointerDown);
     this.buildTypeControls.forEach((control) => {
       control.button.off('pointerdown', control.onPointerDown);
     });
-    this.scene.input.off('pointerup', this.onBuildingPointerEnd);
-    this.scene.input.off('pointerupoutside', this.onBuildingPointerEnd);
-    this.scene.scale.off('resize', this.onBuildingResize);
+    if (sceneInput) {
+      sceneInput.off('pointerup', this.onBuildingPointerEnd);
+      sceneInput.off('pointerupoutside', this.onBuildingPointerEnd);
+    }
+    if (sceneScale) sceneScale.off('resize', this.onBuildingResize);
     window.removeEventListener('pointerup', this.onBuildingWindowPointerEnd);
     window.removeEventListener('pointercancel', this.onBuildingWindowPointerEnd);
     window.removeEventListener('blur', this.onBuildingBlur);
     document.removeEventListener('visibilitychange', this.onBuildingVisibilityChange);
 
-    this.scene.events.off(Phaser.Scenes.Events.SHUTDOWN, this.destroy, this);
-    this.scene.events.off(Phaser.Scenes.Events.DESTROY, this.destroy, this);
+    if (sceneEvents) {
+      sceneEvents.off(Phaser.Scenes.Events.SHUTDOWN, this.destroy, this);
+      sceneEvents.off(Phaser.Scenes.Events.DESTROY, this.destroy, this);
+    }
 
     if (this.virtualJoystick) {
       this.virtualJoystick.destroy();

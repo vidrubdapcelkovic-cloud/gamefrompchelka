@@ -9,6 +9,7 @@ class InventoryUI {
     this.activeQuickSlotIndex = 0;
     this.selectedSourceIndex = null;
     this.isOpen = false;
+    this.interactionBlocked = false;
     this.destroyed = false;
     this.backpackPointerId = null;
     this.backpackNativePointerId = null;
@@ -105,6 +106,7 @@ class InventoryUI {
 
   registerHandlers() {
     this.onQuickKey = (index) => (event) => {
+      if (this.destroyed || this.interactionBlocked) return;
       if ((!event || !event.repeat) && this.canSelectQuickSlot()) {
         this.setActiveQuickSlot(index);
       }
@@ -114,15 +116,18 @@ class InventoryUI {
       this.scene.input.keyboard.on(`keydown-${keyName}`, this.quickKeyHandlers[index]);
     });
     this.onToggleKey = (event) => {
+      if (this.destroyed || this.interactionBlocked) return;
       if (!event || !event.repeat) this.togglePanel();
     };
     this.onEscapeKey = (event) => {
+      if (this.destroyed || this.interactionBlocked) return;
       if (!event || !event.repeat) this.closePanel();
     };
     this.scene.input.keyboard.on('keydown-I', this.onToggleKey);
     this.scene.input.keyboard.on('keydown-ESC', this.onEscapeKey);
 
     this.onBackpackPointerDown = (pointer, localX, localY, event) => {
+      if (this.destroyed || this.interactionBlocked) return;
       if (this.backpackPointerId !== null) return;
       if (event && event.stopPropagation) event.stopPropagation();
       this.backpackPointerId = pointer.id;
@@ -162,6 +167,7 @@ class InventoryUI {
   }
 
   reposition() {
+    if (this.destroyed) return;
     const width = this.scene.scale.gameSize.width;
     const height = this.scene.scale.gameSize.height;
     const quickStartX = width / 2 - 112;
@@ -188,7 +194,43 @@ class InventoryUI {
     this.backpackLabel.setPosition(width - 52, 52);
   }
 
+  setInteractionBlocked(blocked) {
+    const next = Boolean(blocked);
+    if (this.interactionBlocked === next) return;
+    this.interactionBlocked = next;
+    if (next) {
+      if (this.isOpen) this.closePanel();
+      this.resetBackpackPointer();
+      this.resetSourceSelection();
+      this.disableSlotInteractivity();
+      if (this.backpackButton && this.backpackButton.input) this.backpackButton.disableInteractive();
+      return;
+    }
+    if (this.destroyed) return;
+    this.enableSlotInteractivity();
+    if (this.backpackButton && this.backpackButton.active) this.backpackButton.setInteractive();
+  }
+
+  disableSlotInteractivity() {
+    [...this.quickSlots, ...this.mainSlots].forEach((slot) => {
+      if (slot.background && slot.background.input) slot.background.disableInteractive();
+    });
+  }
+
+  enableSlotInteractivity() {
+    if (this.destroyed) return;
+    this.quickSlots.forEach((slot) => {
+      if (slot.background && slot.background.active) slot.background.setInteractive();
+    });
+    if (this.isOpen) {
+      this.mainSlots.forEach((slot) => {
+        if (slot.background && slot.background.active) slot.background.setInteractive();
+      });
+    }
+  }
+
   updateFromModel() {
+    if (this.destroyed) return;
     const slots = this.inventoryModel.getSlots();
     [...this.quickSlots, ...this.mainSlots].forEach((slot) => {
       const contents = slots[slot.slotIndex];
@@ -222,6 +264,7 @@ class InventoryUI {
   }
 
   handleSlotPointerDown(index) {
+    if (this.destroyed || this.interactionBlocked) return;
     if (!this.isOpen) {
       if (index < 5 && this.canSelectQuickSlot()) this.setActiveQuickSlot(index);
       return;
@@ -251,6 +294,7 @@ class InventoryUI {
   }
 
   updateSlotHighlights() {
+    if (this.destroyed) return;
     [...this.quickSlots, ...this.mainSlots].forEach((slot) => {
       const isSource = slot.slotIndex === this.selectedSourceIndex;
       const isActiveQuick = slot.slotIndex === this.activeQuickSlotIndex && slot.slotIndex < 5;
@@ -312,27 +356,38 @@ class InventoryUI {
   destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
+    this.interactionBlocked = true;
     this.resetBackpackPointer();
     this.resetSourceSelection();
-    ['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE'].forEach((keyName, index) => {
-      this.scene.input.keyboard.off(`keydown-${keyName}`, this.quickKeyHandlers[index]);
-    });
-    this.scene.input.keyboard.off('keydown-I', this.onToggleKey);
-    this.scene.input.keyboard.off('keydown-ESC', this.onEscapeKey);
-    this.backpackButton.off('pointerdown', this.onBackpackPointerDown);
-    this.panelBackground.off('pointerdown', this.onPanelPointerDown);
+    const sceneInput = this.scene && this.scene.input;
+    const sceneKeyboard = sceneInput && sceneInput.keyboard;
+    const sceneScale = this.scene && this.scene.scale;
+    const sceneEvents = this.scene && this.scene.events;
+    if (sceneKeyboard) {
+      ['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE'].forEach((keyName, index) => {
+        sceneKeyboard.off(`keydown-${keyName}`, this.quickKeyHandlers[index]);
+      });
+      sceneKeyboard.off('keydown-I', this.onToggleKey);
+      sceneKeyboard.off('keydown-ESC', this.onEscapeKey);
+    }
+    if (this.backpackButton) this.backpackButton.off('pointerdown', this.onBackpackPointerDown);
+    if (this.panelBackground) this.panelBackground.off('pointerdown', this.onPanelPointerDown);
     [...this.quickSlots, ...this.mainSlots].forEach(
-      (slot) => slot.background.off('pointerdown', slot.onPointerDown)
+      (slot) => { if (slot.background) slot.background.off('pointerdown', slot.onPointerDown); }
     );
-    this.scene.input.off('pointerup', this.onBackpackPointerEnd);
-    this.scene.input.off('pointerupoutside', this.onBackpackPointerEnd);
-    this.scene.scale.off('resize', this.onResize);
+    if (sceneInput) {
+      sceneInput.off('pointerup', this.onBackpackPointerEnd);
+      sceneInput.off('pointerupoutside', this.onBackpackPointerEnd);
+    }
+    if (sceneScale) sceneScale.off('resize', this.onResize);
     window.removeEventListener('pointerup', this.onWindowPointerEnd);
     window.removeEventListener('pointercancel', this.onWindowPointerEnd);
     window.removeEventListener('blur', this.onBlur);
     document.removeEventListener('visibilitychange', this.onVisibilityChange);
-    this.scene.events.off(Phaser.Scenes.Events.SHUTDOWN, this.destroy, this);
-    this.scene.events.off(Phaser.Scenes.Events.DESTROY, this.destroy, this);
+    if (sceneEvents) {
+      sceneEvents.off(Phaser.Scenes.Events.SHUTDOWN, this.destroy, this);
+      sceneEvents.off(Phaser.Scenes.Events.DESTROY, this.destroy, this);
+    }
     new Set(this.elements).forEach((element) => {
       if (element && element.active) element.destroy();
     });
