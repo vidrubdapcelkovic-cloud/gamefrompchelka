@@ -35,11 +35,20 @@ class SaveSystem {
         return { itemType: item.itemType, quantity: item.quantity, x: item.x, y: item.y };
       });
       const wallCells = new Set();
+      const buildingIds = new Set();
       const walls = w.walls.map((wall) => {
         if (!wall || !BuildCatalog[wall.buildType] || !Number.isInteger(wall.col) || !Number.isInteger(wall.row)
           || wall.col < 0 || wall.col >= 48 || wall.row < 0 || wall.row >= 36) throw new Error();
         const key = `${wall.col},${wall.row}`; if (wallCells.has(key)) throw new Error(); wallCells.add(key);
-        return { buildType: wall.buildType, col: wall.col, row: wall.row };
+        if (wall.id !== undefined
+          && (typeof wall.id !== 'string' || wall.id.length === 0 || buildingIds.has(wall.id))) throw new Error();
+        if (wall.id !== undefined) buildingIds.add(wall.id);
+        const normalized = { buildType: wall.buildType, col: wall.col, row: wall.row };
+        if (wall.id !== undefined) normalized.id = wall.id;
+        if (wall.buildType === 'CHEST') {
+          normalized.storage = ChestStorageModel.normalizeSlots(wall.storage);
+        }
+        return normalized;
       });
       return { version: 1, savedAt: state.savedAt,
         player: { x: p.x, y: p.y, health: p.health, hunger: p.hunger },

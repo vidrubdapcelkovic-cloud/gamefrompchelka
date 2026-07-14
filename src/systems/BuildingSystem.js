@@ -48,7 +48,20 @@ class BuildingSystem {
       .setVisible(true);
   }
 
-  place(col, row) {
+  createStableId(restoredId) {
+    if (typeof restoredId === 'string' && restoredId.length > 0
+      && !this.placements.some((placement) => placement.id === restoredId)) {
+      const match = /^building-(\d+)$/.exec(restoredId);
+      if (match) this.nextId = Math.max(this.nextId, Number(match[1]) + 1);
+      return restoredId;
+    }
+    let id;
+    do { id = `building-${this.nextId++}`; }
+    while (this.placements.some((placement) => placement.id === id));
+    return id;
+  }
+
+  place(col, row, restoredId, storageState) {
     if (!this.active || !this.worldGrid.isInside(col, row) || this.isOccupied(col, row)) {
       return null;
     }
@@ -59,12 +72,14 @@ class BuildingSystem {
       : this.scene.add.image(position.x, position.y, this.textureKeys[this.buildType]);
     visualObject.setDepth((position.y + visualObject.displayHeight / 2) * WORLD_DEPTH_SCALE);
     visualObject.setDataEnabled();
-    const id = `building-${this.nextId++}`;
+    const id = this.createStableId(restoredId);
     visualObject.setData('id', id);
     visualObject.setData('buildType', this.buildType);
     visualObject.setData('col', col);
     visualObject.setData('row', row);
-    const placement = { id, buildType: this.buildType, col, row, visualObject, active: true };
+    const storage = this.buildType === 'CHEST' ? new ChestStorageModel() : null;
+    if (storage && storageState !== undefined) storage.importState(storageState);
+    const placement = { id, buildType: this.buildType, col, row, visualObject, storage, active: true };
     this.placements.push(placement);
     this.occupiedCells.add(`${col},${row}`);
     return placement;
@@ -84,6 +99,12 @@ class BuildingSystem {
     ) || null;
   }
 
+  getChestStorage(id) {
+    const placement = this.getPlacement(id);
+    return placement && placement.buildType === 'CHEST'
+      && placement.storage instanceof ChestStorageModel ? placement.storage : null;
+  }
+
   remove(id) {
     const placement = this.getPlacement(id);
     if (placement === null) return null;
@@ -97,21 +118,32 @@ class BuildingSystem {
     return placement;
   }
 
-  exportState() { return this.getPlacements().map(({ buildType, col, row }) => ({ buildType, col, row })); }
+  exportState() {
+    return this.getPlacements().map(({ id, buildType, col, row, storage }) => {
+      const state = { id, buildType, col, row };
+      if (buildType === 'CHEST') state.storage = storage.exportState();
+      return state;
+    });
+  }
   clearPlacements() {
     this.placements.forEach((p) => { if (p.visualObject && p.visualObject.active) p.visualObject.destroy(); p.active = false; });
-    this.placements = []; this.occupiedCells.clear();
+    this.placements = []; this.occupiedCells.clear(); this.nextId = 1;
   }
   restoreState(walls) {
-    if (!Array.isArray(walls)) return false; const cells = new Set();
+    if (!Array.isArray(walls)) return false; const cells = new Set(); const ids = new Set();
     for (const wall of walls) {
       const key = wall && `${wall.col},${wall.row}`;
       if (!wall || !BuildCatalog[wall.buildType] || !Number.isInteger(wall.col) || !Number.isInteger(wall.row)
-        || !this.worldGrid.isInside(wall.col, wall.row) || cells.has(key)) return false;
+        || !this.worldGrid.isInside(wall.col, wall.row) || cells.has(key)
+        || (wall.id !== undefined && (typeof wall.id !== 'string' || !wall.id || ids.has(wall.id)))) return false;
       cells.add(key);
+      if (wall.id !== undefined) ids.add(wall.id);
     }
     this.clearPlacements(); const previousType = this.buildType; const previousActive = this.active;
-    walls.forEach((wall) => { this.active = true; this.buildType = wall.buildType; this.place(wall.col, wall.row); });
+    walls.forEach((wall) => {
+      this.active = true; this.buildType = wall.buildType;
+      this.place(wall.col, wall.row, wall.id, wall.storage);
+    });
     this.active = previousActive; this.buildType = previousType; if (!this.active) this.previewObject.setVisible(false); return true;
   }
 

@@ -271,6 +271,17 @@ const BuildCatalog = Object.freeze({
     healAmount: 20,
     healCooldownMs: 30000,
     interactionDurationMs: 800
+  }),
+  CHEST: Object.freeze({
+    id: 'CHEST',
+    displayName: 'Сундук',
+    widthCells: 1,
+    heightCells: 1,
+    blocksMovement: true,
+    cost: Object.freeze([
+      Object.freeze({ itemType: 'WOOD', quantity: 6 })
+    ]),
+    storageSlots: 15
   })
 });
 
@@ -697,6 +708,183 @@ class InventoryModel {
   }
 }
 
+class ChestStorageModel {
+  constructor() {
+    const definition = BuildCatalog.CHEST;
+    if (!definition || !Number.isInteger(definition.storageSlots) || definition.storageSlots <= 0) {
+      throw new Error('Для CHEST не задана корректная вместимость.');
+    }
+    this.slotCount = definition.storageSlots;
+    this.slots = Array(this.slotCount).fill(null);
+  }
+
+  isValidIndex(index) {
+    return Number.isInteger(index) && index >= 0 && index < this.slotCount;
+  }
+
+  static cloneSlot(slot) {
+    return slot === null ? null : { itemType: slot.itemType, quantity: slot.quantity };
+  }
+
+  static normalizeSlot(slot) {
+    if (slot === null) return null;
+    if (!slot || !ItemCatalog[slot.itemType] || !Number.isInteger(slot.quantity)
+      || slot.quantity <= 0 || slot.quantity > ItemCatalog[slot.itemType].maxStack) return null;
+    return ChestStorageModel.cloneSlot(slot);
+  }
+
+  static normalizeSlots(value) {
+    const slotCount = BuildCatalog.CHEST.storageSlots;
+    const normalized = Array(slotCount).fill(null);
+    if (!Array.isArray(value)) return normalized;
+    for (let index = 0; index < slotCount; index += 1) {
+      normalized[index] = ChestStorageModel.normalizeSlot(value[index] === undefined ? null : value[index]);
+    }
+    return normalized;
+  }
+
+  getSlot(index) {
+    if (!this.isValidIndex(index)) return null;
+    return ChestStorageModel.cloneSlot(this.slots[index]);
+  }
+
+  getSlots() {
+    return this.slots.map(ChestStorageModel.cloneSlot);
+  }
+
+  canPlace(index, itemType, quantity) {
+    if (!this.isValidIndex(index) || !ItemCatalog[itemType]
+      || !Number.isInteger(quantity) || quantity <= 0
+      || quantity > ItemCatalog[itemType].maxStack) return false;
+    const target = this.slots[index];
+    return target === null
+      || (target.itemType === itemType
+        && target.quantity + quantity <= ItemCatalog[itemType].maxStack);
+  }
+
+  setSlot(index, itemType, quantity) {
+    if (!this.isValidIndex(index) || !ItemCatalog[itemType]
+      || !Number.isInteger(quantity) || quantity <= 0
+      || quantity > ItemCatalog[itemType].maxStack) return false;
+    this.slots[index] = { itemType, quantity };
+    return true;
+  }
+
+  clearSlot(index) {
+    if (!this.isValidIndex(index)) return false;
+    this.slots[index] = null;
+    return true;
+  }
+
+  addItem(itemType, quantity) {
+    const definition = ItemCatalog[itemType];
+    if (!definition || !Number.isInteger(quantity) || quantity <= 0) return quantity;
+    let remainder = quantity;
+    for (let index = 0; index < this.slotCount && remainder > 0; index += 1) {
+      const slot = this.slots[index];
+      if (slot && slot.itemType === itemType && slot.quantity < definition.maxStack) {
+        const added = Math.min(remainder, definition.maxStack - slot.quantity);
+        slot.quantity += added;
+        remainder -= added;
+      }
+    }
+    for (let index = 0; index < this.slotCount && remainder > 0; index += 1) {
+      if (this.slots[index] === null) {
+        const added = Math.min(remainder, definition.maxStack);
+        this.slots[index] = { itemType, quantity: added };
+        remainder -= added;
+      }
+    }
+    return remainder;
+  }
+
+  removeFromSlot(index, quantity) {
+    if (!this.isValidIndex(index) || !Number.isInteger(quantity) || quantity <= 0) return 0;
+    const slot = this.slots[index];
+    if (slot === null) return 0;
+    const removed = Math.min(quantity, slot.quantity);
+    slot.quantity -= removed;
+    if (slot.quantity === 0) this.slots[index] = null;
+    return removed;
+  }
+
+  moveOrMerge(fromIndex, toIndex) {
+    if (!this.isValidIndex(fromIndex) || !this.isValidIndex(toIndex) || fromIndex === toIndex) return false;
+    return ChestStorageModel.transferBetweenContainers(this, fromIndex, this, toIndex);
+  }
+
+  exportState() {
+    return this.getSlots();
+  }
+
+  importState(state) {
+    this.slots = ChestStorageModel.normalizeSlots(state);
+    return true;
+  }
+
+  static transferBetweenContainers(source, sourceIndex, target, targetIndex) {
+    if (!source || !target || typeof source.getSlot !== 'function' || typeof target.getSlot !== 'function'
+      || typeof source.exportState !== 'function' || typeof target.exportState !== 'function'
+      || typeof source.importState !== 'function' || typeof target.importState !== 'function') return false;
+    const sourceSlot = source.getSlot(sourceIndex);
+    const targetSlot = target.getSlot(targetIndex);
+    if (sourceSlot === null || (source === target && sourceIndex === targetIndex)) return false;
+
+    const sourceBefore = source.exportState();
+    const targetBefore = source === target ? sourceBefore : target.exportState();
+    if (!Array.isArray(sourceBefore) || !Array.isArray(targetBefore)
+      || sourceIndex < 0 || sourceIndex >= sourceBefore.length
+      || targetIndex < 0 || targetIndex >= targetBefore.length) return false;
+    const nextSource = sourceBefore.map(ChestStorageModel.cloneSlot);
+    const nextTarget = source === target ? nextSource : targetBefore.map(ChestStorageModel.cloneSlot);
+    const moving = ChestStorageModel.cloneSlot(sourceSlot);
+    const destination = ChestStorageModel.cloneSlot(targetSlot);
+
+    if (destination === null) {
+      nextTarget[targetIndex] = moving;
+      nextSource[sourceIndex] = null;
+    } else if (destination.itemType === moving.itemType) {
+      const maxStack = ItemCatalog[moving.itemType].maxStack;
+      const amount = Math.min(moving.quantity, maxStack - destination.quantity);
+      if (amount <= 0) return false;
+      nextTarget[targetIndex] = { itemType: destination.itemType, quantity: destination.quantity + amount };
+      const remainder = moving.quantity - amount;
+      nextSource[sourceIndex] = remainder > 0 ? { itemType: moving.itemType, quantity: remainder } : null;
+    } else {
+      nextTarget[targetIndex] = moving;
+      nextSource[sourceIndex] = destination;
+    }
+
+    const sourceTotals = ChestStorageModel.countItems(sourceBefore, targetBefore, source === target);
+    const nextTotals = ChestStorageModel.countItems(nextSource, nextTarget, source === target);
+    if (!ChestStorageModel.sameTotals(sourceTotals, nextTotals)) return false;
+
+    try {
+      if (!source.importState(nextSource)) throw new Error('sourceImport');
+      if (target !== source && !target.importState(nextTarget)) throw new Error('targetImport');
+      return true;
+    } catch {
+      source.importState(sourceBefore);
+      if (target !== source) target.importState(targetBefore);
+      return false;
+    }
+  }
+
+  static countItems(first, second, sameContainer) {
+    const totals = {};
+    const arrays = sameContainer ? [first] : [first, second];
+    arrays.forEach((slots) => slots.forEach((slot) => {
+      if (slot) totals[slot.itemType] = (totals[slot.itemType] || 0) + slot.quantity;
+    }));
+    return totals;
+  }
+
+  static sameTotals(first, second) {
+    const keys = new Set([...Object.keys(first), ...Object.keys(second)]);
+    return Array.from(keys).every((key) => first[key] === second[key]);
+  }
+}
+
 class CraftingModel {
   constructor(inventoryModel) {
     this.inventoryModel = inventoryModel;
@@ -783,7 +971,20 @@ class BuildingSystem {
       .setVisible(true);
   }
 
-  place(col, row) {
+  createStableId(restoredId) {
+    if (typeof restoredId === 'string' && restoredId.length > 0
+      && !this.placements.some((placement) => placement.id === restoredId)) {
+      const match = /^building-(\d+)$/.exec(restoredId);
+      if (match) this.nextId = Math.max(this.nextId, Number(match[1]) + 1);
+      return restoredId;
+    }
+    let id;
+    do { id = `building-${this.nextId++}`; }
+    while (this.placements.some((placement) => placement.id === id));
+    return id;
+  }
+
+  place(col, row, restoredId, storageState) {
     if (!this.active || !this.worldGrid.isInside(col, row) || this.isOccupied(col, row)) {
       return null;
     }
@@ -794,12 +995,14 @@ class BuildingSystem {
       : this.scene.add.image(position.x, position.y, this.textureKeys[this.buildType]);
     visualObject.setDepth((position.y + visualObject.displayHeight / 2) * WORLD_DEPTH_SCALE);
     visualObject.setDataEnabled();
-    const id = `building-${this.nextId++}`;
+    const id = this.createStableId(restoredId);
     visualObject.setData('id', id);
     visualObject.setData('buildType', this.buildType);
     visualObject.setData('col', col);
     visualObject.setData('row', row);
-    const placement = { id, buildType: this.buildType, col, row, visualObject, active: true };
+    const storage = this.buildType === 'CHEST' ? new ChestStorageModel() : null;
+    if (storage && storageState !== undefined) storage.importState(storageState);
+    const placement = { id, buildType: this.buildType, col, row, visualObject, storage, active: true };
     this.placements.push(placement);
     this.occupiedCells.add(`${col},${row}`);
     return placement;
@@ -819,6 +1022,12 @@ class BuildingSystem {
     ) || null;
   }
 
+  getChestStorage(id) {
+    const placement = this.getPlacement(id);
+    return placement && placement.buildType === 'CHEST'
+      && placement.storage instanceof ChestStorageModel ? placement.storage : null;
+  }
+
   remove(id) {
     const placement = this.getPlacement(id);
     if (placement === null) return null;
@@ -832,21 +1041,32 @@ class BuildingSystem {
     return placement;
   }
 
-  exportState() { return this.getPlacements().map(({ buildType, col, row }) => ({ buildType, col, row })); }
+  exportState() {
+    return this.getPlacements().map(({ id, buildType, col, row, storage }) => {
+      const state = { id, buildType, col, row };
+      if (buildType === 'CHEST') state.storage = storage.exportState();
+      return state;
+    });
+  }
   clearPlacements() {
     this.placements.forEach((p) => { if (p.visualObject && p.visualObject.active) p.visualObject.destroy(); p.active = false; });
-    this.placements = []; this.occupiedCells.clear();
+    this.placements = []; this.occupiedCells.clear(); this.nextId = 1;
   }
   restoreState(walls) {
-    if (!Array.isArray(walls)) return false; const cells = new Set();
+    if (!Array.isArray(walls)) return false; const cells = new Set(); const ids = new Set();
     for (const wall of walls) {
       const key = wall && `${wall.col},${wall.row}`;
       if (!wall || !BuildCatalog[wall.buildType] || !Number.isInteger(wall.col) || !Number.isInteger(wall.row)
-        || !this.worldGrid.isInside(wall.col, wall.row) || cells.has(key)) return false;
+        || !this.worldGrid.isInside(wall.col, wall.row) || cells.has(key)
+        || (wall.id !== undefined && (typeof wall.id !== 'string' || !wall.id || ids.has(wall.id)))) return false;
       cells.add(key);
+      if (wall.id !== undefined) ids.add(wall.id);
     }
     this.clearPlacements(); const previousType = this.buildType; const previousActive = this.active;
-    walls.forEach((wall) => { this.active = true; this.buildType = wall.buildType; this.place(wall.col, wall.row); });
+    walls.forEach((wall) => {
+      this.active = true; this.buildType = wall.buildType;
+      this.place(wall.col, wall.row, wall.id, wall.storage);
+    });
     this.active = previousActive; this.buildType = previousType; if (!this.active) this.previewObject.setVisible(false); return true;
   }
 
@@ -1268,11 +1488,20 @@ class SaveSystem {
         return { itemType: item.itemType, quantity: item.quantity, x: item.x, y: item.y };
       });
       const wallCells = new Set();
+      const buildingIds = new Set();
       const walls = w.walls.map((wall) => {
         if (!wall || !BuildCatalog[wall.buildType] || !Number.isInteger(wall.col) || !Number.isInteger(wall.row)
           || wall.col < 0 || wall.col >= 48 || wall.row < 0 || wall.row >= 36) throw new Error();
         const key = `${wall.col},${wall.row}`; if (wallCells.has(key)) throw new Error(); wallCells.add(key);
-        return { buildType: wall.buildType, col: wall.col, row: wall.row };
+        if (wall.id !== undefined
+          && (typeof wall.id !== 'string' || wall.id.length === 0 || buildingIds.has(wall.id))) throw new Error();
+        if (wall.id !== undefined) buildingIds.add(wall.id);
+        const normalized = { buildType: wall.buildType, col: wall.col, row: wall.row };
+        if (wall.id !== undefined) normalized.id = wall.id;
+        if (wall.buildType === 'CHEST') {
+          normalized.storage = ChestStorageModel.normalizeSlots(wall.storage);
+        }
+        return normalized;
       });
       return { version: 1, savedAt: state.savedAt,
         player: { x: p.x, y: p.y, health: p.health, hunger: p.hunger },
@@ -2113,6 +2342,231 @@ class CraftingUI {
   }
 }
 
+class ChestUI {
+  constructor(scene, inventoryModel, textureKeys, getOpenContext, onOpenChanged, onContentsChanged) {
+    this.scene = scene;
+    this.inventoryModel = inventoryModel;
+    this.textureKeys = textureKeys;
+    this.getOpenContext = getOpenContext;
+    this.onOpenChanged = onOpenChanged;
+    this.onContentsChanged = onContentsChanged;
+    this.isOpen = false;
+    this.destroyed = false;
+    this.selectedSource = null;
+    this.elements = [];
+    this.interactiveElements = [];
+    this.chestSlots = [];
+    this.playerSlots = [];
+    this.createPanel();
+    this.registerHandlers();
+    this.setVisible(false);
+  }
+
+  createPanel() {
+    this.panelBackground = this.scene.add.rectangle(480, 270, 820, 450, 0x0d141b, 0.97)
+      .setScrollFactor(0).setDepth(INTERFACE_DEPTH + 60)
+      .setStrokeStyle(3, 0xd8b879, 0.9).setInteractive();
+    this.title = this.scene.add.text(480, 62, 'Сундук', {
+      fontFamily: 'Arial, sans-serif', fontSize: '27px', fontStyle: 'bold', color: '#fff4cf'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 61);
+    this.chestLabel = this.scene.add.text(320, 104, 'Хранилище', {
+      fontFamily: 'Arial, sans-serif', fontSize: '18px', color: '#e8c989'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 61);
+    this.playerLabel = this.scene.add.text(640, 104, 'Инвентарь', {
+      fontFamily: 'Arial, sans-serif', fontSize: '18px', color: '#bad5e8'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 61);
+    this.closeButton = this.scene.add.rectangle(838, 62, 74, 40, 0x713f3f, 0.95)
+      .setStrokeStyle(2, 0xffb8b8, 0.9).setScrollFactor(0)
+      .setDepth(INTERFACE_DEPTH + 62).setInteractive();
+    this.closeLabel = this.scene.add.text(838, 62, 'Закрыть', {
+      fontFamily: 'Arial, sans-serif', fontSize: '12px', fontStyle: 'bold', color: '#ffffff'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 63);
+    this.elements.push(
+      this.panelBackground, this.title, this.chestLabel, this.playerLabel,
+      this.closeButton, this.closeLabel
+    );
+    this.interactiveElements.push(this.panelBackground, this.closeButton);
+    this.onPanelPointerDown = (pointer, localX, localY, event) => {
+      if (event && event.stopPropagation) event.stopPropagation();
+    };
+    this.onClosePointerDown = (pointer, localX, localY, event) => {
+      if (event && event.stopPropagation) event.stopPropagation();
+      this.closePanel();
+    };
+    this.panelBackground.on('pointerdown', this.onPanelPointerDown);
+    this.closeButton.on('pointerdown', this.onClosePointerDown);
+
+    for (let index = 0; index < BuildCatalog.CHEST.storageSlots; index += 1) {
+      const col = index % 5;
+      const row = Math.floor(index / 5);
+      this.chestSlots.push(this.createSlot(220 + col * 50, 150 + row * 50, 'chest', index));
+    }
+    for (let index = 0; index < 25; index += 1) {
+      const col = index % 5;
+      const row = Math.floor(index / 5);
+      this.playerSlots.push(this.createSlot(540 + col * 50, 150 + row * 50, 'player', index));
+    }
+  }
+
+  createSlot(x, y, container, index) {
+    const background = this.scene.add.rectangle(x, y, 44, 44, 0x1b2731, 0.98)
+      .setScrollFactor(0).setDepth(INTERFACE_DEPTH + 62)
+      .setStrokeStyle(2, container === 'chest' ? 0xa68550 : 0x78909f, 0.9)
+      .setInteractive();
+    const icon = this.scene.add.image(x, y - 2, 'temporary-ground-wood')
+      .setScrollFactor(0).setDepth(INTERFACE_DEPTH + 63).setVisible(false);
+    const quantityText = this.scene.add.text(x + 17, y + 16, '', {
+      fontFamily: 'Arial, sans-serif', fontSize: '12px', fontStyle: 'bold', color: '#ffffff',
+      stroke: '#101820', strokeThickness: 3
+    }).setOrigin(1).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 64).setVisible(false);
+    const slot = { container, index, background, icon, quantityText };
+    slot.onPointerDown = (pointer, localX, localY, event) => {
+      if (event && event.stopPropagation) event.stopPropagation();
+      this.handleSlotPointerDown(container, index);
+    };
+    background.on('pointerdown', slot.onPointerDown);
+    this.elements.push(background, icon, quantityText);
+    this.interactiveElements.push(background);
+    return slot;
+  }
+
+  registerHandlers() {
+    this.onEscapeKey = (event) => {
+      if ((!event || !event.repeat) && this.isOpen) this.closePanel();
+    };
+    this.scene.input.keyboard.on('keydown-ESC', this.onEscapeKey);
+    this.scene.events.once(Phaser.Scenes.Events.SHUTDOWN, this.destroy, this);
+    this.scene.events.once(Phaser.Scenes.Events.DESTROY, this.destroy, this);
+  }
+
+  getValidatedContext() {
+    if (!this.isOpen) return null;
+    const context = this.getOpenContext();
+    if (!context || !context.chestId || !(context.storage instanceof ChestStorageModel)) {
+      this.closePanel();
+      return null;
+    }
+    return context;
+  }
+
+  openPanel() {
+    if (this.isOpen || !this.getOpenContext()) return false;
+    this.isOpen = true;
+    this.selectedSource = null;
+    this.updateFromModels();
+    this.setVisible(true);
+    this.onOpenChanged(true);
+    return true;
+  }
+
+  closePanel() {
+    if (!this.isOpen) return false;
+    this.isOpen = false;
+    this.selectedSource = null;
+    this.setVisible(false);
+    this.onOpenChanged(false);
+    return true;
+  }
+
+  setVisible(visible) {
+    this.elements.forEach((element) => element.setVisible(visible));
+    this.interactiveElements.forEach((element) => {
+      if (visible) element.setInteractive();
+      else element.disableInteractive();
+    });
+    if (visible) this.updateFromModels();
+  }
+
+  updateSlot(slot, contents) {
+    const visible = this.isOpen && contents !== null;
+    if (contents) {
+      const textureKey = this.textureKeys[contents.itemType];
+      if (!ItemCatalog[contents.itemType] || !textureKey) {
+        throw new Error(`Нельзя отобразить предмет сундука: ${contents.itemType}.`);
+      }
+      slot.icon.setTexture(textureKey).setVisible(visible);
+      slot.quantityText.setText(String(contents.quantity)).setVisible(visible);
+    } else {
+      slot.icon.setVisible(false);
+      slot.quantityText.setText('').setVisible(false);
+    }
+  }
+
+  updateFromModels() {
+    if (!this.isOpen) return false;
+    const context = this.getValidatedContext();
+    if (!context) return false;
+    const chestSlots = context.storage.getSlots();
+    const playerSlots = this.inventoryModel.getSlots();
+    this.chestSlots.forEach((slot) => this.updateSlot(slot, chestSlots[slot.index]));
+    this.playerSlots.forEach((slot) => this.updateSlot(slot, playerSlots[slot.index]));
+    this.updateHighlights();
+    return true;
+  }
+
+  getModel(container, context) {
+    if (container === 'chest') return context.storage;
+    if (container === 'player') return this.inventoryModel;
+    return null;
+  }
+
+  handleSlotPointerDown(container, index) {
+    const context = this.getValidatedContext();
+    if (!context) return false;
+    const model = this.getModel(container, context);
+    if (!model) return false;
+    if (this.selectedSource === null) {
+      if (model.getSlot(index) !== null) {
+        this.selectedSource = { container, index };
+        this.updateHighlights();
+      }
+      return false;
+    }
+    if (this.selectedSource.container === container && this.selectedSource.index === index) {
+      this.selectedSource = null;
+      this.updateHighlights();
+      return false;
+    }
+    const sourceModel = this.getModel(this.selectedSource.container, context);
+    const result = ChestStorageModel.transferBetweenContainers(
+      sourceModel, this.selectedSource.index, model, index
+    );
+    this.selectedSource = null;
+    this.updateFromModels();
+    if (result) this.onContentsChanged();
+    return result;
+  }
+
+  updateHighlights() {
+    [...this.chestSlots, ...this.playerSlots].forEach((slot) => {
+      const selected = this.selectedSource
+        && this.selectedSource.container === slot.container
+        && this.selectedSource.index === slot.index;
+      const color = slot.container === 'chest' ? 0xa68550 : 0x78909f;
+      slot.background.setStrokeStyle(selected ? 4 : 2, selected ? 0x63e6ff : color, 1);
+    });
+  }
+
+  destroy() {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    if (this.isOpen) this.closePanel();
+    this.scene.input.keyboard.off('keydown-ESC', this.onEscapeKey);
+    this.panelBackground.off('pointerdown', this.onPanelPointerDown);
+    this.closeButton.off('pointerdown', this.onClosePointerDown);
+    [...this.chestSlots, ...this.playerSlots].forEach(
+      (slot) => slot.background.off('pointerdown', slot.onPointerDown)
+    );
+    this.scene.events.off(Phaser.Scenes.Events.SHUTDOWN, this.destroy, this);
+    this.scene.events.off(Phaser.Scenes.Events.DESTROY, this.destroy, this);
+    this.elements.forEach((element) => { if (element && element.active) element.destroy(); });
+    this.elements = [];
+    this.interactiveElements = [];
+    this.chestSlots = [];
+    this.playerSlots = [];
+  }
+}
+
 class VirtualJoystick {
   constructor(scene) {
     this.scene = scene;
@@ -2317,6 +2771,7 @@ class GameScene extends Phaser.Scene {
     this.createVirtualJoystick();
     this.createInventoryUI();
     this.createCraftingUI();
+    this.createChestUI();
     this.createSurvivalInterface();
     this.createBuildingInterface();
     this.createCombatInterface();
@@ -2335,6 +2790,7 @@ class GameScene extends Phaser.Scene {
     return Boolean(
       (this.inventoryUI && this.inventoryUI.isOpen)
       || (this.craftingUI && this.craftingUI.isOpen)
+      || (this.chestUI && this.chestUI.isOpen)
     );
   }
 
@@ -2356,7 +2812,7 @@ class GameScene extends Phaser.Scene {
   }
 
   canBuild() {
-    return !this.isApplyingSave && !this.isPlayerDead();
+    return !this.isApplyingSave && !this.isPlayerDead() && !this.isModalOpen();
   }
 
   canOpenPanel() {
@@ -2735,7 +3191,8 @@ class GameScene extends Phaser.Scene {
       this.blockingWorldObjects,
       {
         WOOD_WALL: 'temporary-wood-wall',
-        CAMPFIRE: 'temporary-campfire'
+        CAMPFIRE: 'temporary-campfire',
+        CHEST: 'temporary-chest'
       }
     );
     this.interactionTargetValidator = (target) => this.isInteractionTargetValid(target);
@@ -2743,12 +3200,12 @@ class GameScene extends Phaser.Scene {
   }
 
   isInteractionTargetValid(target) {
-    if (target.type !== 'WOOD_WALL' && target.type !== 'CAMPFIRE') return true;
+    if (!['WOOD_WALL', 'CAMPFIRE', 'CHEST'].includes(target.type)) return true;
     const building = this.buildingSystem ? this.buildingSystem.getPlacement(target.id) : null;
     if (building === null || target.building !== building || target.buildType !== building.buildType) {
       return false;
     }
-    if (target.type === 'CAMPFIRE' && (
+    if ((target.type === 'CAMPFIRE' || target.type === 'CHEST') && (
       this.isApplyingSave
       || this.isPlayerDead()
       || this.isModalOpen()
@@ -2909,6 +3366,24 @@ class GameScene extends Phaser.Scene {
       campfire.fillRect(15, 16, 3, 6);
       campfire.generateTexture('temporary-campfire', 32, 32);
       campfire.destroy();
+    }
+
+    if (!this.textures.exists('temporary-chest')) {
+      const chest = this.make.graphics({ x: 0, y: 0, add: false });
+      chest.fillStyle(0x5b351e, 1);
+      chest.fillRect(2, 10, 28, 20);
+      chest.fillStyle(0x8a552d, 1);
+      chest.fillRect(3, 5, 26, 10);
+      chest.fillStyle(0xb77a3f, 1);
+      chest.fillRect(5, 7, 22, 3);
+      chest.fillStyle(0x30251d, 1);
+      chest.fillRect(2, 14, 28, 3);
+      chest.fillStyle(0xe0b45d, 1);
+      chest.fillRect(14, 14, 5, 8);
+      chest.fillStyle(0x8b6a35, 1);
+      chest.fillRect(15, 16, 3, 3);
+      chest.generateTexture('temporary-chest', 32, 32);
+      chest.destroy();
     }
 
     if (!this.textures.exists('temporary-slime')) {
@@ -3193,6 +3668,7 @@ class GameScene extends Phaser.Scene {
       this.actionNativePointerId = pointer.event ? pointer.event.pointerId : null;
       this.actionButton.setScale(0.92);
       this.actionButtonLabel.setScale(0.92);
+      if (this.tryOpenCurrentChest()) return;
       if (!this.startInteractionHold('pointer')) this.resetActionButton();
     };
     this.onActionPointerEnd = (pointer) => {
@@ -3253,8 +3729,10 @@ class GameScene extends Phaser.Scene {
     }
 
     this.interactionHintText
-      .setText(target && target.type === 'CAMPFIRE' ? this.getCampfireHintText() : '')
-      .setVisible(Boolean(target && target.type === 'CAMPFIRE'));
+      .setText(target && target.type === 'CAMPFIRE'
+        ? this.getCampfireHintText()
+        : (target && target.type === 'CHEST' ? 'E: открыть сундук' : ''))
+      .setVisible(Boolean(target && (target.type === 'CAMPFIRE' || target.type === 'CHEST')));
 
     this.actionButton.setFillStyle(hasTarget ? 0x3f8f5b : 0x263642, hasTarget ? 0.82 : 0.42);
     this.actionButton.setStrokeStyle(3, hasTarget ? 0xd9ffe3 : 0xb9cbd6, hasTarget ? 0.95 : 0.5);
@@ -3365,6 +3843,10 @@ class GameScene extends Phaser.Scene {
   }
 
   completeInteraction(target) {
+    if (target.type === 'CHEST') {
+      this.openChestById(target.id);
+      return;
+    }
     if (target.type === 'CAMPFIRE') {
       this.completeCampfireRest(target);
       return;
@@ -3774,6 +4256,60 @@ class GameScene extends Phaser.Scene {
     );
   }
 
+  createChestUI() {
+    this.openChestId = null;
+    this.chestUI = new ChestUI(
+      this,
+      this.inventoryModel,
+      ITEM_TEXTURE_KEYS,
+      () => this.getOpenChestContext(),
+      (isOpen) => this.handleChestOpenChanged(isOpen),
+      () => {
+        this.inventoryUI.updateFromModel();
+        this.updateInventoryHud();
+      }
+    );
+  }
+
+  getOpenChestContext() {
+    if (typeof this.openChestId !== 'string' || !this.buildingSystem) return null;
+    const placement = this.buildingSystem.getPlacement(this.openChestId);
+    const storage = this.buildingSystem.getChestStorage(this.openChestId);
+    if (!placement || placement.buildType !== 'CHEST' || !storage) return null;
+    return { chestId: placement.id, storage };
+  }
+
+  tryOpenCurrentChest() {
+    const target = this.interactionSystem ? this.interactionSystem.getCurrentTarget() : null;
+    if (!target || target.type !== 'CHEST') return false;
+    return this.openChestById(target.id);
+  }
+
+  openChestById(chestId) {
+    if (!this.canHarvest() || this.buildingSystem.isActive()) return false;
+    const currentTarget = this.interactionSystem.getCurrentTarget();
+    const placement = this.buildingSystem.getPlacement(chestId);
+    const storage = this.buildingSystem.getChestStorage(chestId);
+    if (!currentTarget || currentTarget.id !== chestId || currentTarget.type !== 'CHEST'
+      || !this.isInteractionTargetValid(currentTarget)
+      || !placement || placement.buildType !== 'CHEST' || !storage) return false;
+    if (this.inventoryUI.isOpen) this.inventoryUI.closePanel();
+    if (this.craftingUI.isOpen) this.craftingUI.closePanel();
+    this.cancelInteractionHold();
+    this.openChestId = chestId;
+    if (!this.chestUI.openPanel()) {
+      this.openChestId = null;
+      return false;
+    }
+    return true;
+  }
+
+  closeChestPanel() {
+    if (this.chestUI && this.chestUI.isOpen) return this.chestUI.closePanel();
+    this.openChestId = null;
+    return false;
+  }
+
   isBlockingPanelOpen() {
     return this.isModalOpen();
   }
@@ -3870,6 +4406,7 @@ class GameScene extends Phaser.Scene {
     if (this.interactionHintText) this.interactionHintText.setVisible(false);
     if (this.inventoryUI.isOpen) this.inventoryUI.closePanel();
     if (this.craftingUI.isOpen) this.craftingUI.closePanel();
+    this.closeChestPanel();
     this.inventoryUI.resetBackpackPointer(); this.craftingUI.resetPointer();
     if (this.virtualJoystick) this.virtualJoystick.reset();
     if (this.input.keyboard) this.input.keyboard.resetKeys();
@@ -4346,8 +4883,9 @@ class GameScene extends Phaser.Scene {
     this.buildToggleLabel.setPosition(width - 52, 192);
     this.placeButton.setPosition(width - 260, height - 92);
     this.placeButtonLabel.setPosition(width - 260, height - 92);
+    const buildControlStartX = width / 2 - ((this.buildTypeControls.length - 1) * 145) / 2;
     this.buildTypeControls.forEach((control, index) => {
-      const x = width - 360 + index * 145;
+      const x = buildControlStartX + index * 145;
       control.button.setPosition(x, 192);
       control.label.setPosition(x, 192);
     });
@@ -4645,6 +5183,7 @@ class GameScene extends Phaser.Scene {
     this.exitBuildMode();
     if (this.inventoryUI && this.inventoryUI.isOpen) this.inventoryUI.closePanel();
     if (this.craftingUI && this.craftingUI.isOpen) this.craftingUI.closePanel();
+    this.closeChestPanel();
     this.targetMarker.setVisible(false);
     if (this.interactionHintText) this.interactionHintText.setVisible(false);
     this.updateDeathPresentation();
@@ -4697,6 +5236,7 @@ class GameScene extends Phaser.Scene {
       return;
     }
     if (isOpen && this.craftingUI && this.craftingUI.isOpen) this.craftingUI.closePanel();
+    if (isOpen) this.closeChestPanel();
     this.handleBlockingPanelChanged(isOpen);
   }
 
@@ -4710,6 +5250,19 @@ class GameScene extends Phaser.Scene {
       return;
     }
     if (isOpen && this.inventoryUI && this.inventoryUI.isOpen) this.inventoryUI.closePanel();
+    if (isOpen) this.closeChestPanel();
+    this.handleBlockingPanelChanged(isOpen);
+  }
+
+  handleChestOpenChanged(isOpen) {
+    if (!isOpen) this.openChestId = null;
+    if (isOpen && (this.isDeathHandled || this.isApplyingSave
+      || (this.buildingSystem && this.buildingSystem.isActive()))) {
+      this.closeChestPanel();
+      return;
+    }
+    if (isOpen && this.inventoryUI && this.inventoryUI.isOpen) this.inventoryUI.closePanel();
+    if (isOpen && this.craftingUI && this.craftingUI.isOpen) this.craftingUI.closePanel();
     this.handleBlockingPanelChanged(isOpen);
   }
 
@@ -4792,6 +5345,10 @@ class GameScene extends Phaser.Scene {
       return;
     }
 
+    if (this.chestUI && this.chestUI.isOpen && this.getOpenChestContext() === null) {
+      this.closeChestPanel();
+    }
+
     this.updatePlayerHitFlash();
 
     if (Phaser.Input.Keyboard.JustDown(this.buildToggleKey) && this.canBuild()) {
@@ -4849,7 +5406,7 @@ class GameScene extends Phaser.Scene {
     }
 
     if (Phaser.Input.Keyboard.JustDown(this.interactKey)) {
-      this.startInteractionHold('keyboard');
+      if (!this.tryOpenCurrentChest()) this.startInteractionHold('keyboard');
     }
 
     if (this.holdInputSource === 'keyboard' && !this.interactKey.isDown) {

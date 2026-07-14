@@ -52,6 +52,7 @@ class GameScene extends Phaser.Scene {
     this.createVirtualJoystick();
     this.createInventoryUI();
     this.createCraftingUI();
+    this.createChestUI();
     this.createSurvivalInterface();
     this.createBuildingInterface();
     this.createCombatInterface();
@@ -70,6 +71,7 @@ class GameScene extends Phaser.Scene {
     return Boolean(
       (this.inventoryUI && this.inventoryUI.isOpen)
       || (this.craftingUI && this.craftingUI.isOpen)
+      || (this.chestUI && this.chestUI.isOpen)
     );
   }
 
@@ -91,7 +93,7 @@ class GameScene extends Phaser.Scene {
   }
 
   canBuild() {
-    return !this.isApplyingSave && !this.isPlayerDead();
+    return !this.isApplyingSave && !this.isPlayerDead() && !this.isModalOpen();
   }
 
   canOpenPanel() {
@@ -470,7 +472,8 @@ class GameScene extends Phaser.Scene {
       this.blockingWorldObjects,
       {
         WOOD_WALL: 'temporary-wood-wall',
-        CAMPFIRE: 'temporary-campfire'
+        CAMPFIRE: 'temporary-campfire',
+        CHEST: 'temporary-chest'
       }
     );
     this.interactionTargetValidator = (target) => this.isInteractionTargetValid(target);
@@ -478,12 +481,12 @@ class GameScene extends Phaser.Scene {
   }
 
   isInteractionTargetValid(target) {
-    if (target.type !== 'WOOD_WALL' && target.type !== 'CAMPFIRE') return true;
+    if (!['WOOD_WALL', 'CAMPFIRE', 'CHEST'].includes(target.type)) return true;
     const building = this.buildingSystem ? this.buildingSystem.getPlacement(target.id) : null;
     if (building === null || target.building !== building || target.buildType !== building.buildType) {
       return false;
     }
-    if (target.type === 'CAMPFIRE' && (
+    if ((target.type === 'CAMPFIRE' || target.type === 'CHEST') && (
       this.isApplyingSave
       || this.isPlayerDead()
       || this.isModalOpen()
@@ -644,6 +647,24 @@ class GameScene extends Phaser.Scene {
       campfire.fillRect(15, 16, 3, 6);
       campfire.generateTexture('temporary-campfire', 32, 32);
       campfire.destroy();
+    }
+
+    if (!this.textures.exists('temporary-chest')) {
+      const chest = this.make.graphics({ x: 0, y: 0, add: false });
+      chest.fillStyle(0x5b351e, 1);
+      chest.fillRect(2, 10, 28, 20);
+      chest.fillStyle(0x8a552d, 1);
+      chest.fillRect(3, 5, 26, 10);
+      chest.fillStyle(0xb77a3f, 1);
+      chest.fillRect(5, 7, 22, 3);
+      chest.fillStyle(0x30251d, 1);
+      chest.fillRect(2, 14, 28, 3);
+      chest.fillStyle(0xe0b45d, 1);
+      chest.fillRect(14, 14, 5, 8);
+      chest.fillStyle(0x8b6a35, 1);
+      chest.fillRect(15, 16, 3, 3);
+      chest.generateTexture('temporary-chest', 32, 32);
+      chest.destroy();
     }
 
     if (!this.textures.exists('temporary-slime')) {
@@ -928,6 +949,7 @@ class GameScene extends Phaser.Scene {
       this.actionNativePointerId = pointer.event ? pointer.event.pointerId : null;
       this.actionButton.setScale(0.92);
       this.actionButtonLabel.setScale(0.92);
+      if (this.tryOpenCurrentChest()) return;
       if (!this.startInteractionHold('pointer')) this.resetActionButton();
     };
     this.onActionPointerEnd = (pointer) => {
@@ -988,8 +1010,10 @@ class GameScene extends Phaser.Scene {
     }
 
     this.interactionHintText
-      .setText(target && target.type === 'CAMPFIRE' ? this.getCampfireHintText() : '')
-      .setVisible(Boolean(target && target.type === 'CAMPFIRE'));
+      .setText(target && target.type === 'CAMPFIRE'
+        ? this.getCampfireHintText()
+        : (target && target.type === 'CHEST' ? 'E: открыть сундук' : ''))
+      .setVisible(Boolean(target && (target.type === 'CAMPFIRE' || target.type === 'CHEST')));
 
     this.actionButton.setFillStyle(hasTarget ? 0x3f8f5b : 0x263642, hasTarget ? 0.82 : 0.42);
     this.actionButton.setStrokeStyle(3, hasTarget ? 0xd9ffe3 : 0xb9cbd6, hasTarget ? 0.95 : 0.5);
@@ -1100,6 +1124,10 @@ class GameScene extends Phaser.Scene {
   }
 
   completeInteraction(target) {
+    if (target.type === 'CHEST') {
+      this.openChestById(target.id);
+      return;
+    }
     if (target.type === 'CAMPFIRE') {
       this.completeCampfireRest(target);
       return;
@@ -1509,6 +1537,60 @@ class GameScene extends Phaser.Scene {
     );
   }
 
+  createChestUI() {
+    this.openChestId = null;
+    this.chestUI = new ChestUI(
+      this,
+      this.inventoryModel,
+      ITEM_TEXTURE_KEYS,
+      () => this.getOpenChestContext(),
+      (isOpen) => this.handleChestOpenChanged(isOpen),
+      () => {
+        this.inventoryUI.updateFromModel();
+        this.updateInventoryHud();
+      }
+    );
+  }
+
+  getOpenChestContext() {
+    if (typeof this.openChestId !== 'string' || !this.buildingSystem) return null;
+    const placement = this.buildingSystem.getPlacement(this.openChestId);
+    const storage = this.buildingSystem.getChestStorage(this.openChestId);
+    if (!placement || placement.buildType !== 'CHEST' || !storage) return null;
+    return { chestId: placement.id, storage };
+  }
+
+  tryOpenCurrentChest() {
+    const target = this.interactionSystem ? this.interactionSystem.getCurrentTarget() : null;
+    if (!target || target.type !== 'CHEST') return false;
+    return this.openChestById(target.id);
+  }
+
+  openChestById(chestId) {
+    if (!this.canHarvest() || this.buildingSystem.isActive()) return false;
+    const currentTarget = this.interactionSystem.getCurrentTarget();
+    const placement = this.buildingSystem.getPlacement(chestId);
+    const storage = this.buildingSystem.getChestStorage(chestId);
+    if (!currentTarget || currentTarget.id !== chestId || currentTarget.type !== 'CHEST'
+      || !this.isInteractionTargetValid(currentTarget)
+      || !placement || placement.buildType !== 'CHEST' || !storage) return false;
+    if (this.inventoryUI.isOpen) this.inventoryUI.closePanel();
+    if (this.craftingUI.isOpen) this.craftingUI.closePanel();
+    this.cancelInteractionHold();
+    this.openChestId = chestId;
+    if (!this.chestUI.openPanel()) {
+      this.openChestId = null;
+      return false;
+    }
+    return true;
+  }
+
+  closeChestPanel() {
+    if (this.chestUI && this.chestUI.isOpen) return this.chestUI.closePanel();
+    this.openChestId = null;
+    return false;
+  }
+
   isBlockingPanelOpen() {
     return this.isModalOpen();
   }
@@ -1605,6 +1687,7 @@ class GameScene extends Phaser.Scene {
     if (this.interactionHintText) this.interactionHintText.setVisible(false);
     if (this.inventoryUI.isOpen) this.inventoryUI.closePanel();
     if (this.craftingUI.isOpen) this.craftingUI.closePanel();
+    this.closeChestPanel();
     this.inventoryUI.resetBackpackPointer(); this.craftingUI.resetPointer();
     if (this.virtualJoystick) this.virtualJoystick.reset();
     if (this.input.keyboard) this.input.keyboard.resetKeys();
@@ -2081,8 +2164,9 @@ class GameScene extends Phaser.Scene {
     this.buildToggleLabel.setPosition(width - 52, 192);
     this.placeButton.setPosition(width - 260, height - 92);
     this.placeButtonLabel.setPosition(width - 260, height - 92);
+    const buildControlStartX = width / 2 - ((this.buildTypeControls.length - 1) * 145) / 2;
     this.buildTypeControls.forEach((control, index) => {
-      const x = width - 360 + index * 145;
+      const x = buildControlStartX + index * 145;
       control.button.setPosition(x, 192);
       control.label.setPosition(x, 192);
     });
@@ -2380,6 +2464,7 @@ class GameScene extends Phaser.Scene {
     this.exitBuildMode();
     if (this.inventoryUI && this.inventoryUI.isOpen) this.inventoryUI.closePanel();
     if (this.craftingUI && this.craftingUI.isOpen) this.craftingUI.closePanel();
+    this.closeChestPanel();
     this.targetMarker.setVisible(false);
     if (this.interactionHintText) this.interactionHintText.setVisible(false);
     this.updateDeathPresentation();
@@ -2432,6 +2517,7 @@ class GameScene extends Phaser.Scene {
       return;
     }
     if (isOpen && this.craftingUI && this.craftingUI.isOpen) this.craftingUI.closePanel();
+    if (isOpen) this.closeChestPanel();
     this.handleBlockingPanelChanged(isOpen);
   }
 
@@ -2445,6 +2531,19 @@ class GameScene extends Phaser.Scene {
       return;
     }
     if (isOpen && this.inventoryUI && this.inventoryUI.isOpen) this.inventoryUI.closePanel();
+    if (isOpen) this.closeChestPanel();
+    this.handleBlockingPanelChanged(isOpen);
+  }
+
+  handleChestOpenChanged(isOpen) {
+    if (!isOpen) this.openChestId = null;
+    if (isOpen && (this.isDeathHandled || this.isApplyingSave
+      || (this.buildingSystem && this.buildingSystem.isActive()))) {
+      this.closeChestPanel();
+      return;
+    }
+    if (isOpen && this.inventoryUI && this.inventoryUI.isOpen) this.inventoryUI.closePanel();
+    if (isOpen && this.craftingUI && this.craftingUI.isOpen) this.craftingUI.closePanel();
     this.handleBlockingPanelChanged(isOpen);
   }
 
@@ -2527,6 +2626,10 @@ class GameScene extends Phaser.Scene {
       return;
     }
 
+    if (this.chestUI && this.chestUI.isOpen && this.getOpenChestContext() === null) {
+      this.closeChestPanel();
+    }
+
     this.updatePlayerHitFlash();
 
     if (Phaser.Input.Keyboard.JustDown(this.buildToggleKey) && this.canBuild()) {
@@ -2584,7 +2687,7 @@ class GameScene extends Phaser.Scene {
     }
 
     if (Phaser.Input.Keyboard.JustDown(this.interactKey)) {
-      this.startInteractionHold('keyboard');
+      if (!this.tryOpenCurrentChest()) this.startInteractionHold('keyboard');
     }
 
     if (this.holdInputSource === 'keyboard' && !this.interactKey.isDown) {

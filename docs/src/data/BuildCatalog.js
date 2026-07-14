@@ -22,5 +22,16 @@ const BuildCatalog = Object.freeze({
     healAmount: 20,
     healCooldownMs: 30000,
     interactionDurationMs: 800
+  }),
+  CHEST: Object.freeze({
+    id: 'CHEST',
+    displayName: 'Сундук',
+    widthCells: 1,
+    heightCells: 1,
+    blocksMovement: true,
+    cost: Object.freeze([
+      Object.freeze({ itemType: 'WOOD', quantity: 6 })
+    ]),
+    storageSlots: 15
   })
 });
