@@ -15,6 +15,8 @@ const ITEM_TEXTURE_KEYS = Object.freeze({
   WOOD: 'temporary-ground-wood',
   STONE: 'temporary-ground-stone',
   SLIME_GEL: 'temporary-slime-gel',
+  RAW_MEAT: 'temporary-raw-meat',
+  MEAT_STEW: 'temporary-meat-stew',
   BERRIES: 'temporary-ground-berries',
   STONE_AXE: 'temporary-stone-axe',
   STONE_PICKAXE: 'temporary-stone-pickaxe',
@@ -678,6 +680,24 @@ class GameScene extends Phaser.Scene {
         graphics.fillStyle(0xd2ffc0, 1);
         graphics.fillRect(6, 9, 3, 3);
       }],
+      ['temporary-raw-meat', 0xc95b63, (graphics) => {
+        graphics.fillRoundedRect(2, 5, 16, 12, 5);
+        graphics.fillStyle(0xf08b8f, 1);
+        graphics.fillRoundedRect(5, 7, 10, 7, 3);
+        graphics.fillStyle(0xffd3c5, 1);
+        graphics.fillCircle(15, 7, 3);
+      }],
+      ['temporary-meat-stew', 0x71452f, (graphics) => {
+        graphics.fillRoundedRect(2, 8, 16, 10, 4);
+        graphics.fillStyle(0xcfd6dc, 1);
+        graphics.fillRect(1, 7, 18, 3);
+        graphics.fillStyle(0xa95032, 1);
+        graphics.fillRoundedRect(4, 8, 12, 5, 2);
+        graphics.fillStyle(0xe8b45a, 1);
+        graphics.fillRect(7, 9, 3, 2);
+        graphics.fillStyle(0x6fa354, 1);
+        graphics.fillRect(12, 10, 3, 2);
+      }],
       ['temporary-ground-berries', 0xc53f57, (graphics) => {
         graphics.fillCircle(6, 10, 5);
         graphics.fillCircle(14, 10, 5);
@@ -968,9 +988,7 @@ class GameScene extends Phaser.Scene {
     }
 
     this.interactionHintText
-      .setText(target && target.type === 'CAMPFIRE'
-        ? 'Удерживайте E: отдохнуть у костра'
-        : '')
+      .setText(target && target.type === 'CAMPFIRE' ? this.getCampfireHintText() : '')
       .setVisible(Boolean(target && target.type === 'CAMPFIRE'));
 
     this.actionButton.setFillStyle(hasTarget ? 0x3f8f5b : 0x263642, hasTarget ? 0.82 : 0.42);
@@ -1116,6 +1134,63 @@ class GameScene extends Phaser.Scene {
     this.showInteractionMessage(`${drop.itemType} ×${drop.quantity}`);
   }
 
+  getCampfireRecipe() {
+    const recipes = Object.values(RecipeCatalog).filter(
+      (recipe) => recipe.station === 'CAMPFIRE'
+    );
+    if (recipes.length !== 1) {
+      throw new Error(`Ожидался один рецепт CAMPFIRE, найдено: ${recipes.length}.`);
+    }
+    return recipes[0];
+  }
+
+  getCampfireActionState() {
+    const recipe = this.getCampfireRecipe();
+    const availability = this.craftingModel.canCraft(recipe.id, 'CAMPFIRE');
+    const hasIngredients = recipe.ingredients.every(
+      (ingredient) => this.inventoryModel.getTotal(ingredient.itemType) >= ingredient.quantity
+    );
+    const canStoreResult = hasIngredients && availability.reason !== 'noSpace';
+    const canCook = recipe.station === 'CAMPFIRE'
+      && hasIngredients
+      && canStoreResult
+      && availability.canCraft;
+    const needsHealing = !this.isPlayerDead()
+      && this.playerStatsModel.getHealth() < this.playerStatsModel.getMaxHealth();
+    const evaluatedAt = this.getCombatTime();
+    const remainingHealCooldownMs = needsHealing
+      ? Math.max(
+        0,
+        BuildCatalog.CAMPFIRE.healCooldownMs
+          - (evaluatedAt - this.lastCampfireHealTime)
+      )
+      : 0;
+    return {
+      recipe,
+      hasIngredients,
+      canStoreResult,
+      canCook,
+      needsHealing,
+      healOnCooldown: remainingHealCooldownMs > 0,
+      remainingHealCooldownMs,
+      evaluatedAt,
+      failureReason: hasIngredients ? availability.reason : 'missingIngredients'
+    };
+  }
+
+  getCampfireHintText() {
+    const actionState = this.getCampfireActionState();
+    if (actionState.canCook) return 'Удерживайте E: приготовить похлёбку';
+    if (actionState.needsHealing) return 'Удерживайте E: отдохнуть у костра';
+    return 'Удерживайте E: использовать костёр';
+  }
+
+  getCampfireRequirementsText(recipe) {
+    return recipe.ingredients.map((ingredient) => (
+      `${ItemCatalog[ingredient.itemType].displayName} ×${ingredient.quantity}`
+    )).join(', ');
+  }
+
   completeCampfireRest(target) {
     const building = this.buildingSystem.getPlacement(target.id);
     const currentTarget = this.interactionSystem.getCurrentTarget();
@@ -1128,18 +1203,36 @@ class GameScene extends Phaser.Scene {
       || !this.isInteractionTargetValid(target)
       || this.isPlayerDead()) return false;
 
+    const actionState = this.getCampfireActionState();
+    if (actionState.canCook) {
+      const craftResult = this.craftingModel.craft(actionState.recipe.id, 'CAMPFIRE');
+      if (!craftResult.success) {
+        throw new Error(`Не удалось выполнить доступный рецепт костра: ${craftResult.reason}.`);
+      }
+      this.inventoryUI.updateFromModel();
+      this.updateInventoryHud();
+      this.showInteractionMessage(
+        `Приготовлено: ${ItemCatalog[craftResult.resultItemType].displayName} ×${craftResult.resultQuantity}`
+      );
+      return true;
+    }
+
     const definition = BuildCatalog.CAMPFIRE;
     const healthBefore = this.playerStatsModel.getHealth();
-    if (healthBefore >= this.playerStatsModel.getMaxHealth()) {
-      this.showInteractionMessage('Здоровье уже полное');
+    if (!actionState.needsHealing) {
+      if (actionState.failureReason === 'noSpace') {
+        this.showInteractionMessage('Нет места для мясной похлёбки');
+      } else {
+        this.showInteractionMessage(
+          `Для похлёбки нужно: ${this.getCampfireRequirementsText(actionState.recipe)}`
+        );
+      }
       return false;
     }
 
-    const now = this.getCombatTime();
-    const remainingMs = definition.healCooldownMs - (now - this.lastCampfireHealTime);
-    if (remainingMs > 0) {
+    if (actionState.healOnCooldown) {
       this.showInteractionMessage(
-        `Костёр ещё не готов. Осталось: ${Math.ceil(remainingMs / 1000)} сек.`
+        `Костёр ещё не готов. Осталось: ${Math.ceil(actionState.remainingHealCooldownMs / 1000)} сек.`
       );
       return false;
     }
@@ -1149,7 +1242,7 @@ class GameScene extends Phaser.Scene {
     const healed = healthAfter - healthBefore;
     if (healed <= 0) return false;
 
-    this.lastCampfireHealTime = now;
+    this.lastCampfireHealTime = actionState.evaluatedAt;
     this.statusHUD.update(healthAfter, this.playerStatsModel.getHunger());
     this.showInteractionMessage(`Вы отдохнули у костра. Здоровье +${healed}`);
     return true;
@@ -1799,36 +1892,49 @@ class GameScene extends Phaser.Scene {
       const loot = creatureDefinition ? creatureDefinition.loot : null;
       const displayName = creatureDefinition.displayName;
       if (result.died) {
-        if (!loot || !ItemCatalog[loot.itemId]
-          || !Number.isInteger(loot.minQuantity) || !Number.isInteger(loot.maxQuantity)
-          || loot.minQuantity <= 0 || loot.maxQuantity < loot.minQuantity) {
+        if (!Array.isArray(loot) || loot.length === 0 || loot.some((drop) => (
+          !drop
+          || !ItemCatalog[drop.itemId]
+          || !Number.isInteger(drop.minQuantity)
+          || !Number.isInteger(drop.maxQuantity)
+          || drop.minQuantity <= 0
+          || drop.maxQuantity < drop.minQuantity
+        ))) {
           throw new Error(`Некорректная конфигурация лута существа: ${target.type}.`);
         }
-        const quantity = Phaser.Math.Between(loot.minQuantity, loot.maxQuantity);
         const groundItemsBefore = this.groundItemSystem.getItems().length;
-        const droppedItem = this.groundItemSystem.spawn(
-          loot.itemId,
-          quantity,
-          deathX,
-          deathY
-        );
+        const droppedItems = loot.map((drop, index) => {
+          const quantity = Phaser.Math.Between(drop.minQuantity, drop.maxQuantity);
+          const offsetX = (index - (loot.length - 1) / 2) * 12;
+          return this.groundItemSystem.spawn(
+            drop.itemId,
+            quantity,
+            deathX + offsetX,
+            deathY
+          );
+        });
         const groundItemsAfter = this.groundItemSystem.getItems();
-        const textureKey = this.groundItemSystem.textureKeys[loot.itemId];
-        const dropIsValid = groundItemsAfter.length === groundItemsBefore + 1
-          && groundItemsAfter.includes(droppedItem)
-          && droppedItem.itemType === loot.itemId
-          && droppedItem.quantity === quantity
-          && droppedItem.x === deathX
-          && droppedItem.y === deathY
-          && droppedItem.visualObject
-          && droppedItem.visualObject.active
-          && droppedItem.visualObject.visible
-          && droppedItem.visualObject.alpha > 0
-          && droppedItem.visualObject.texture.key === textureKey
-          && this.textures.exists(textureKey);
-        if (!dropIsValid) {
+        const dropsAreValid = groundItemsAfter.length === groundItemsBefore + loot.length
+          && droppedItems.every((droppedItem, index) => {
+            const definition = loot[index];
+            const textureKey = this.groundItemSystem.textureKeys[definition.itemId];
+            const expectedX = deathX + (index - (loot.length - 1) / 2) * 12;
+            return groundItemsAfter.includes(droppedItem)
+              && droppedItem.itemType === definition.itemId
+              && droppedItem.quantity >= definition.minQuantity
+              && droppedItem.quantity <= definition.maxQuantity
+              && droppedItem.x === expectedX
+              && droppedItem.y === deathY
+              && droppedItem.visualObject
+              && droppedItem.visualObject.active
+              && droppedItem.visualObject.visible
+              && droppedItem.visualObject.alpha > 0
+              && droppedItem.visualObject.texture.key === textureKey
+              && this.textures.exists(textureKey);
+          });
+        if (!dropsAreValid) {
           throw new Error(
-            `Не удалось создать лут ${loot.itemId} ×${quantity} в (${deathX}, ${deathY}).`
+            `Не удалось создать весь лут существа ${target.type} в (${deathX}, ${deathY}).`
           );
         }
       }
@@ -2225,21 +2331,41 @@ class GameScene extends Phaser.Scene {
       return false;
     }
 
-    const restored = this.playerStatsModel.restoreHunger(item.hungerRestore);
-    if (restored === 0) {
-      this.showInteractionMessage('Сытость уже полная');
+    const result = this.applyFoodFromSlot(slotIndex, item);
+    if (!result.consumed) {
+      this.showInteractionMessage(item.healthRestore
+        ? 'Вы не голодны и не ранены'
+        : 'Сытость уже полная');
       return false;
-    }
-
-    const removed = this.inventoryModel.removeFromSlot(slotIndex, 1);
-    if (removed !== 1) {
-      throw new Error(`Не удалось удалить использованный предмет из слота ${slotIndex}.`);
     }
     this.inventoryUI.updateFromModel();
     this.updateInventoryHud();
     this.statusHUD.update(this.playerStatsModel.getHealth(), this.playerStatsModel.getHunger());
-    this.showInteractionMessage(`Съедено: ${item.displayName} +${restored}`);
+    const displayedHungerRestored = Math.round(result.hungerRestored * 100) / 100;
+    const displayedHealthRestored = Math.round(result.healthRestored * 100) / 100;
+    const message = item.healthRestore
+      ? `Съедено: ${item.displayName}. Голод +${displayedHungerRestored}, здоровье +${displayedHealthRestored}`
+      : `Съедено: ${item.displayName} +${displayedHungerRestored}`;
+    this.showInteractionMessage(message);
     return true;
+  }
+
+  applyFoodFromSlot(slotIndex, item) {
+    const statsBefore = this.playerStatsModel.exportState();
+    const hungerRestored = this.playerStatsModel.restoreHunger(item.hungerRestore || 0);
+    const healthRestored = this.playerStatsModel.restoreHealth(item.healthRestore || 0);
+    if (hungerRestored === 0 && healthRestored === 0) {
+      return { consumed: false, hungerRestored: 0, healthRestored: 0 };
+    }
+
+    const removed = this.inventoryModel.removeFromSlot(slotIndex, 1);
+    if (removed !== 1) {
+      if (!this.playerStatsModel.importState(statsBefore)) {
+        throw new Error('Не удалось восстановить показатели после ошибки употребления еды.');
+      }
+      throw new Error(`Не удалось удалить использованный предмет из слота ${slotIndex}.`);
+    }
+    return { consumed: true, hungerRestored, healthRestored };
   }
 
   handlePlayerDeath() {

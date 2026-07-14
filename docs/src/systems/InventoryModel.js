@@ -115,7 +115,7 @@ class InventoryModel {
     return { type: 'swap', movedQuantity: source.quantity };
   }
 
-  craftExchange(ingredients, result) {
+  prepareCraftExchange(ingredients, result) {
     if (!Array.isArray(ingredients) || ingredients.length === 0) {
       throw new Error('Ингредиенты крафта должны быть непустым массивом.');
     }
@@ -171,7 +171,20 @@ class InventoryModel {
     }
 
     if (remainingResult > 0) return { success: false, reason: 'noSpace' };
-    this.slots = workingSlots;
+    return { success: true, slots: workingSlots };
+  }
+
+  canCraftExchange(ingredients, result) {
+    const prepared = this.prepareCraftExchange(ingredients, result);
+    return prepared.success
+      ? { success: true }
+      : { success: false, reason: prepared.reason };
+  }
+
+  craftExchange(ingredients, result) {
+    const prepared = this.prepareCraftExchange(ingredients, result);
+    if (!prepared.success) return prepared;
+    this.slots = prepared.slots;
     return { success: true };
   }
 

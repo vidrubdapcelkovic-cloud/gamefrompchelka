@@ -3,22 +3,26 @@ class CraftingModel {
     this.inventoryModel = inventoryModel;
   }
 
-  canCraft(recipeId) {
+  canCraft(recipeId, station = null) {
     const recipe = RecipeCatalog[recipeId];
     if (!recipe) throw new Error(`Неизвестный рецепт: ${recipeId}.`);
-    const missingIngredients = recipe.ingredients.filter(
-      (ingredient) => this.inventoryModel.getTotal(ingredient.itemType) < ingredient.quantity
-    );
+    if (recipe.station && recipe.station !== station) {
+      return { recipeId, canCraft: false, reason: 'stationRequired' };
+    }
+    const exchange = this.inventoryModel.canCraftExchange(recipe.ingredients, recipe.result);
     return {
       recipeId,
-      canCraft: missingIngredients.length === 0,
-      reason: missingIngredients.length === 0 ? null : 'missingIngredients'
+      canCraft: exchange.success,
+      reason: exchange.success ? null : exchange.reason
     };
   }
 
-  craft(recipeId) {
+  craft(recipeId, station = null) {
     const recipe = RecipeCatalog[recipeId];
     if (!recipe) throw new Error(`Неизвестный рецепт: ${recipeId}.`);
+    if (recipe.station && recipe.station !== station) {
+      return { success: false, reason: 'stationRequired' };
+    }
     const exchange = this.inventoryModel.craftExchange(recipe.ingredients, recipe.result);
     if (!exchange.success) return exchange;
     return {

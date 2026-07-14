@@ -6,7 +6,9 @@ class CraftingUI {
     this.onCraftResult = onCraftResult;
     this.canOpenPanel = canOpenPanel || (() => true);
     this.textureKeys = textureKeys;
-    this.recipeIds = Object.keys(RecipeCatalog);
+    this.recipeIds = Object.keys(RecipeCatalog).filter(
+      (recipeId) => !RecipeCatalog[recipeId].station
+    );
     this.selectedRecipeId = this.recipeIds[0];
     this.isOpen = false;
     this.destroyed = false;
@@ -154,7 +156,7 @@ class CraftingUI {
   }
 
   selectRecipe(recipeId) {
-    if (!RecipeCatalog[recipeId]) return false;
+    if (!this.recipeIds.includes(recipeId)) return false;
     this.selectedRecipeId = recipeId;
     this.updateSelection();
     return true;

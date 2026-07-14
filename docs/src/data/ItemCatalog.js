@@ -8,6 +8,18 @@ const ItemCatalog = Object.freeze({
   SLIME_GEL: Object.freeze({
     id: 'SLIME_GEL', displayName: 'Слизь', maxStack: 99, category: 'RESOURCE', consumable: false
   }),
+  RAW_MEAT: Object.freeze({
+    id: 'RAW_MEAT', displayName: 'Сырое мясо', maxStack: 20, category: 'RESOURCE', consumable: false
+  }),
+  MEAT_STEW: Object.freeze({
+    id: 'MEAT_STEW',
+    displayName: 'Мясная похлёбка',
+    maxStack: 10,
+    category: 'FOOD',
+    consumable: true,
+    hungerRestore: 45,
+    healthRestore: 10
+  }),
   BERRIES: Object.freeze({
     id: 'BERRIES',
     displayName: 'Ягоды',
