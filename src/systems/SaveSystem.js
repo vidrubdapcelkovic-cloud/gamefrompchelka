@@ -1,13 +1,12 @@
-const STORAGE_KEY = 'survival-save-v1';
 const VERSION = 1;
 
 class SaveSystem {
-  constructor(storage) {
-    if (storage !== undefined) this.storage = storage;
-    else { try { this.storage = globalThis.localStorage; } catch { this.storage = null; } }
+  constructor(slotManager, slotId) {
+    this.slotManager = slotManager;
+    this.slotId = slotManager && slotManager.isValidSlotId(slotId) ? slotId : null;
   }
 
-  normalize(state) {
+  static normalizeState(state) {
     try {
       if (!state || state.version !== VERSION || !Number.isFinite(state.savedAt)) return null;
       const p = state.player, inv = state.inventory, w = state.world;
@@ -59,8 +58,37 @@ class SaveSystem {
     } catch { return null; }
   }
 
-  hasSave() { try { return this.storage.getItem(STORAGE_KEY) !== null; } catch { return false; } }
-  save(state) { try { const normalized = this.normalize(state); if (!normalized) return { success: false, reason: 'invalidData' }; this.storage.setItem(STORAGE_KEY, JSON.stringify(normalized)); return { success: true }; } catch { return { success: false, reason: 'storageError' }; } }
-  load() { try { const raw = this.storage.getItem(STORAGE_KEY); if (raw === null) return { success: false, reason: 'notFound' }; let parsed; try { parsed = JSON.parse(raw); } catch { return { success: false, reason: 'invalidData' }; } const state = this.normalize(parsed); return state ? { success: true, state } : { success: false, reason: 'invalidData' }; } catch { return { success: false, reason: 'storageError' }; } }
-  deleteSave() { try { this.storage.removeItem(STORAGE_KEY); return { success: true }; } catch { return { success: false, reason: 'storageError' }; } }
+  normalize(state) {
+    return SaveSystem.normalizeState(state);
+  }
+
+  hasSave() {
+    if (!this.slotManager || this.slotId === null) return false;
+    const result = this.slotManager.has(this.slotId);
+    return result.success && result.exists;
+  }
+
+  save(state) {
+    const normalized = this.normalize(state);
+    if (!normalized) return { success: false, reason: 'invalidData' };
+    if (!this.slotManager || this.slotId === null) return { success: false, reason: 'invalidSlot' };
+    return this.slotManager.write(this.slotId, normalized);
+  }
+
+  load() {
+    if (!this.slotManager || this.slotId === null) return { success: false, reason: 'invalidSlot' };
+    const result = this.slotManager.read(this.slotId);
+    if (!result.success) {
+      if (result.reason === 'empty') return { success: false, reason: 'notFound' };
+      if (result.reason === 'invalidJson') return { success: false, reason: 'invalidData' };
+      return result;
+    }
+    const state = this.normalize(result.value);
+    return state ? { success: true, state } : { success: false, reason: 'invalidData' };
+  }
+
+  deleteSave() {
+    if (!this.slotManager || this.slotId === null) return { success: false, reason: 'invalidSlot' };
+    return this.slotManager.delete(this.slotId);
+  }
 }

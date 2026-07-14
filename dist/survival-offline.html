@@ -1551,16 +1551,124 @@ class ProjectileSystem {
   }
 }
 
-const STORAGE_KEY = 'survival-save-v1';
+const SAVE_SLOT_KEYS = Object.freeze({
+  1: 'survival-save-slot-1-v1',
+  2: 'survival-save-slot-2-v1'
+});
+const LEGACY_SAVE_KEY = 'survival-save-v1';
+const SAVE_SLOT_MIGRATION_KEY = 'survival-save-migration-slots-v1';
+
+class SaveSlotManager {
+  constructor(storage) {
+    if (storage !== undefined) this.storage = storage;
+    else {
+      try { this.storage = globalThis.localStorage; }
+      catch { this.storage = null; }
+    }
+  }
+
+  isValidSlotId(slotId) {
+    return slotId === 1 || slotId === 2;
+  }
+
+  getSlotKey(slotId) {
+    return this.isValidSlotId(slotId) ? SAVE_SLOT_KEYS[slotId] : null;
+  }
+
+  read(slotId) {
+    const key = this.getSlotKey(slotId);
+    if (key === null) return { success: false, reason: 'invalidSlot' };
+    if (!this.storage) return { success: false, reason: 'storageError' };
+    try {
+      const raw = this.storage.getItem(key);
+      if (raw === null) return { success: false, reason: 'empty' };
+      try { return { success: true, value: JSON.parse(raw), raw }; }
+      catch { return { success: false, reason: 'invalidJson' }; }
+    } catch { return { success: false, reason: 'storageError' }; }
+  }
+
+  write(slotId, value) {
+    const key = this.getSlotKey(slotId);
+    if (key === null) return { success: false, reason: 'invalidSlot' };
+    if (!this.storage) return { success: false, reason: 'storageError' };
+    try {
+      this.storage.setItem(key, JSON.stringify(value));
+      return { success: true };
+    } catch { return { success: false, reason: 'storageError' }; }
+  }
+
+  delete(slotId) {
+    const key = this.getSlotKey(slotId);
+    if (key === null) return { success: false, reason: 'invalidSlot' };
+    if (!this.storage) return { success: false, reason: 'storageError' };
+    try {
+      this.storage.removeItem(key);
+      return this.storage.getItem(key) === null
+        ? { success: true }
+        : { success: false, reason: 'storageError' };
+    } catch { return { success: false, reason: 'storageError' }; }
+  }
+
+  has(slotId) {
+    const result = this.read(slotId);
+    if (result.success) return { success: true, exists: true };
+    if (result.reason === 'empty') return { success: true, exists: false };
+    return result;
+  }
+
+  inspectSlot(slotId) {
+    if (!this.isValidSlotId(slotId)) return { status: 'INVALID', reason: 'invalidSlot' };
+    const readResult = this.read(slotId);
+    if (!readResult.success) {
+      if (readResult.reason === 'empty') return { status: 'EMPTY' };
+      if (readResult.reason === 'invalidJson') return { status: 'CORRUPT' };
+      return { status: 'ERROR', reason: readResult.reason };
+    }
+    const normalized = SaveSystem.normalizeState(readResult.value);
+    if (normalized === null) return { status: 'CORRUPT' };
+    const dayNight = new DayNightSystem(normalized.dayNight);
+    return {
+      status: 'VALID',
+      state: normalized,
+      summary: dayNight.formatHud()
+    };
+  }
+
+  migrateLegacySave() {
+    if (!this.storage) return { success: false, reason: 'storageError' };
+    try {
+      if (this.storage.getItem(SAVE_SLOT_MIGRATION_KEY) !== null) {
+        return { success: true, migrated: false, reason: 'alreadyAttempted' };
+      }
+
+      let migrated = false;
+      const slotOneIsEmpty = this.storage.getItem(SAVE_SLOT_KEYS[1]) === null;
+      const legacyRaw = this.storage.getItem(LEGACY_SAVE_KEY);
+      if (slotOneIsEmpty && legacyRaw !== null) {
+        try {
+          const parsed = JSON.parse(legacyRaw);
+          if (SaveSystem.normalizeState(parsed) !== null) {
+            this.storage.setItem(SAVE_SLOT_KEYS[1], legacyRaw);
+            migrated = true;
+          }
+        } catch {}
+      }
+
+      this.storage.setItem(SAVE_SLOT_MIGRATION_KEY, '1');
+      return { success: true, migrated };
+    } catch { return { success: false, reason: 'storageError' }; }
+  }
+}
+
 const VERSION = 1;
 
 class SaveSystem {
-  constructor(storage) {
-    if (storage !== undefined) this.storage = storage;
-    else { try { this.storage = globalThis.localStorage; } catch { this.storage = null; } }
+  constructor(slotManager, slotId) {
+    this.slotManager = slotManager;
+    this.slotId = slotManager && slotManager.isValidSlotId(slotId) ? slotId : null;
   }
 
-  normalize(state) {
+  static normalizeState(state) {
     try {
       if (!state || state.version !== VERSION || !Number.isFinite(state.savedAt)) return null;
       const p = state.player, inv = state.inventory, w = state.world;
@@ -1612,10 +1720,39 @@ class SaveSystem {
     } catch { return null; }
   }
 
-  hasSave() { try { return this.storage.getItem(STORAGE_KEY) !== null; } catch { return false; } }
-  save(state) { try { const normalized = this.normalize(state); if (!normalized) return { success: false, reason: 'invalidData' }; this.storage.setItem(STORAGE_KEY, JSON.stringify(normalized)); return { success: true }; } catch { return { success: false, reason: 'storageError' }; } }
-  load() { try { const raw = this.storage.getItem(STORAGE_KEY); if (raw === null) return { success: false, reason: 'notFound' }; let parsed; try { parsed = JSON.parse(raw); } catch { return { success: false, reason: 'invalidData' }; } const state = this.normalize(parsed); return state ? { success: true, state } : { success: false, reason: 'invalidData' }; } catch { return { success: false, reason: 'storageError' }; } }
-  deleteSave() { try { this.storage.removeItem(STORAGE_KEY); return { success: true }; } catch { return { success: false, reason: 'storageError' }; } }
+  normalize(state) {
+    return SaveSystem.normalizeState(state);
+  }
+
+  hasSave() {
+    if (!this.slotManager || this.slotId === null) return false;
+    const result = this.slotManager.has(this.slotId);
+    return result.success && result.exists;
+  }
+
+  save(state) {
+    const normalized = this.normalize(state);
+    if (!normalized) return { success: false, reason: 'invalidData' };
+    if (!this.slotManager || this.slotId === null) return { success: false, reason: 'invalidSlot' };
+    return this.slotManager.write(this.slotId, normalized);
+  }
+
+  load() {
+    if (!this.slotManager || this.slotId === null) return { success: false, reason: 'invalidSlot' };
+    const result = this.slotManager.read(this.slotId);
+    if (!result.success) {
+      if (result.reason === 'empty') return { success: false, reason: 'notFound' };
+      if (result.reason === 'invalidJson') return { success: false, reason: 'invalidData' };
+      return result;
+    }
+    const state = this.normalize(result.value);
+    return state ? { success: true, state } : { success: false, reason: 'invalidData' };
+  }
+
+  deleteSave() {
+    if (!this.slotManager || this.slotId === null) return { success: false, reason: 'invalidSlot' };
+    return this.slotManager.delete(this.slotId);
+  }
 }
 
 const PLAYER_MAX_HEALTH = 100;
@@ -2819,6 +2956,219 @@ class VirtualJoystick {
   }
 }
 
+const MENU_DEPTH = 100;
+
+class MenuScene extends Phaser.Scene {
+  constructor() {
+    super('MenuScene');
+  }
+
+  init(data) {
+    this.initialMessage = data && typeof data.message === 'string' ? data.message : '';
+  }
+
+  create() {
+    this.cleanupDone = false;
+    this.transitionLocked = false;
+    this.modalAction = null;
+    this.slotManager = new SaveSlotManager();
+    const migration = this.slotManager.migrateLegacySave();
+
+    this.add.rectangle(480, 270, 960, 540, 0x202a32);
+    this.add.rectangle(480, 270, 900, 480, 0x111820, 0.96)
+      .setStrokeStyle(3, 0x7da2b8, 0.8);
+    this.add.text(480, 54, 'ПРОТОТИП ВЫЖИВАЛКИ', {
+      fontFamily: 'Arial, sans-serif', fontSize: '34px', fontStyle: 'bold', color: '#ffffff'
+    }).setOrigin(0.5);
+    this.add.text(480, 91, 'Выберите слот сохранения', {
+      fontFamily: 'Arial, sans-serif', fontSize: '19px', color: '#bde6ff'
+    }).setOrigin(0.5);
+
+    this.slotCards = [this.createSlotCard(1, 270), this.createSlotCard(2, 690)];
+    this.messageText = this.add.text(480, 493, '', {
+      fontFamily: 'Arial, sans-serif', fontSize: '16px', color: '#ffd59b',
+      align: 'center', wordWrap: { width: 820 }
+    }).setOrigin(0.5);
+
+    this.createConfirmationModal();
+    this.refreshSlots();
+    if (!migration.success) this.showMessage('Не удалось проверить старое сохранение: хранилище недоступно.');
+    else if (migration.migrated) this.showMessage('Старое сохранение перенесено в слот 1.');
+    else if (this.initialMessage) this.showMessage(this.initialMessage);
+
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.cleanup, this);
+    this.events.once(Phaser.Scenes.Events.DESTROY, this.cleanup, this);
+  }
+
+  createSlotCard(slotId, x) {
+    const background = this.add.rectangle(x, 280, 360, 320, 0x253441, 0.95)
+      .setStrokeStyle(3, 0x6f93a8, 0.8);
+    const title = this.add.text(x, 145, `СЛОТ ${slotId}`, {
+      fontFamily: 'Arial, sans-serif', fontSize: '25px', fontStyle: 'bold', color: '#ffffff'
+    }).setOrigin(0.5);
+    const status = this.add.text(x, 192, '', {
+      fontFamily: 'Arial, sans-serif', fontSize: '18px', fontStyle: 'bold', color: '#dcecf5'
+    }).setOrigin(0.5);
+    const summary = this.add.text(x, 230, '', {
+      fontFamily: 'Arial, sans-serif', fontSize: '17px', color: '#bde6ff', align: 'center'
+    }).setOrigin(0.5);
+    const continueControl = this.createButton(x, 286, 250, 46, 'ПРОДОЛЖИТЬ', () => this.continueSlot(slotId));
+    const newControl = this.createButton(x, 342, 250, 46, 'НОВАЯ ИГРА', () => this.requestNewGame(slotId));
+    const resetControl = this.createButton(x, 398, 250, 38, 'СБРОСИТЬ СЛОТ', () => this.requestReset(slotId), 0x64383d);
+    return { slotId, background, title, status, summary, continueControl, newControl, resetControl, state: null };
+  }
+
+  createButton(x, y, width, height, label, action, color = 0x365b72) {
+    const button = this.add.rectangle(x, y, width, height, color, 0.95)
+      .setStrokeStyle(2, 0xcbe9ff, 0.8)
+      .setInteractive({ useHandCursor: true });
+    const text = this.add.text(x, y, label, {
+      fontFamily: 'Arial, sans-serif', fontSize: '15px', fontStyle: 'bold', color: '#ffffff'
+    }).setOrigin(0.5);
+    const handler = (pointer, localX, localY, event) => {
+      if (event && event.stopPropagation) event.stopPropagation();
+      if (!this.transitionLocked && !this.modalAction) action();
+    };
+    button.on('pointerdown', handler);
+    return { button, text, handler };
+  }
+
+  setControlEnabled(control, enabled) {
+    control.button.setVisible(enabled);
+    control.text.setVisible(enabled);
+    if (enabled) control.button.setInteractive({ useHandCursor: true });
+    else control.button.disableInteractive();
+  }
+
+  refreshSlots() {
+    this.slotCards.forEach((card) => {
+      card.state = this.slotManager.inspectSlot(card.slotId);
+      const valid = card.state.status === 'VALID';
+      const empty = card.state.status === 'EMPTY';
+      const corrupt = card.state.status === 'CORRUPT';
+      card.status.setText(valid ? 'СОХРАНЕНИЕ' : empty ? 'ПУСТОЙ СЛОТ' : corrupt ? 'СОХРАНЕНИЕ ПОВРЕЖДЕНО' : 'ОШИБКА');
+      card.status.setColor(valid ? '#9ee8a7' : empty ? '#dcecf5' : '#ff9b9b');
+      card.summary.setText(valid ? card.state.summary : corrupt ? 'Слот нужно сбросить' : empty ? 'Начните новую игру' : 'Хранилище недоступно');
+      this.setControlEnabled(card.continueControl, valid);
+      this.setControlEnabled(card.newControl, empty || valid);
+      this.setControlEnabled(card.resetControl, valid || corrupt);
+    });
+  }
+
+  continueSlot(slotId) {
+    const state = this.slotManager.inspectSlot(slotId);
+    if (state.status !== 'VALID') {
+      this.refreshSlots();
+      this.showMessage(state.status === 'CORRUPT' ? 'Сохранение повреждено.' : 'В этом слоте нет сохранения.');
+      return;
+    }
+    this.startGame(slotId, 'continue');
+  }
+
+  requestNewGame(slotId) {
+    const state = this.slotManager.inspectSlot(slotId);
+    if (state.status === 'EMPTY') {
+      this.startGame(slotId, 'new');
+      return;
+    }
+    if (state.status === 'VALID') {
+      this.openModal(`Начать новую игру в слоте ${slotId}? Текущее сохранение будет удалено.`, () => {
+        const deleted = this.slotManager.delete(slotId);
+        if (!deleted.success) {
+          this.closeModal();
+          this.showMessage('Не удалось очистить слот: хранилище недоступно.');
+          return;
+        }
+        this.startGame(slotId, 'new');
+      }, 'НАЧАТЬ ЗАНОВО');
+      return;
+    }
+    this.refreshSlots();
+    this.showMessage('Повреждённый слот сначала нужно сбросить.');
+  }
+
+  requestReset(slotId) {
+    this.openModal(`Удалить сохранение из слота ${slotId}?`, () => {
+      const result = this.slotManager.delete(slotId);
+      this.closeModal();
+      this.refreshSlots();
+      this.showMessage(result.success ? `Слот ${slotId} очищен.` : 'Не удалось очистить слот: хранилище недоступно.');
+    }, 'УДАЛИТЬ');
+  }
+
+  startGame(slotId, mode) {
+    if (this.transitionLocked) return;
+    this.transitionLocked = true;
+    this.scene.start('GameScene', { slotId, mode });
+  }
+
+  createConfirmationModal() {
+    const depth = MENU_DEPTH;
+    this.modalOverlay = this.add.rectangle(480, 270, 960, 540, 0x000000, 0.72)
+      .setDepth(depth).setVisible(false);
+    this.modalPanel = this.add.rectangle(480, 270, 540, 220, 0x17232d, 1)
+      .setStrokeStyle(3, 0xbad5e8, 0.9).setDepth(depth + 1).setVisible(false);
+    this.modalText = this.add.text(480, 228, '', {
+      fontFamily: 'Arial, sans-serif', fontSize: '22px', fontStyle: 'bold', color: '#ffffff',
+      align: 'center', wordWrap: { width: 470 }
+    }).setOrigin(0.5).setDepth(depth + 2).setVisible(false);
+    this.confirmButton = this.add.rectangle(390, 326, 150, 44, 0x3d7651, 1)
+      .setStrokeStyle(2, 0xcbe9ff, 0.85).setDepth(depth + 2).setVisible(false);
+    this.confirmText = this.add.text(390, 326, 'ПОДТВЕРДИТЬ', {
+      fontFamily: 'Arial, sans-serif', fontSize: '17px', fontStyle: 'bold', color: '#ffffff'
+    }).setOrigin(0.5).setDepth(depth + 3).setVisible(false);
+    this.cancelButton = this.add.rectangle(570, 326, 150, 44, 0x5d3e43, 1)
+      .setStrokeStyle(2, 0xcbe9ff, 0.85).setDepth(depth + 2).setVisible(false);
+    this.cancelText = this.add.text(570, 326, 'ОТМЕНА', {
+      fontFamily: 'Arial, sans-serif', fontSize: '16px', fontStyle: 'bold', color: '#ffffff'
+    }).setOrigin(0.5).setDepth(depth + 3).setVisible(false);
+    this.onConfirm = () => { if (this.modalAction) this.modalAction(); };
+    this.onCancel = () => this.closeModal();
+    this.confirmButton.on('pointerdown', this.onConfirm);
+    this.cancelButton.on('pointerdown', this.onCancel);
+  }
+
+  openModal(message, action, confirmLabel) {
+    this.modalAction = action;
+    this.modalText.setText(message);
+    this.confirmText.setText(confirmLabel || 'ПОДТВЕРДИТЬ');
+    this.modalOverlay.setInteractive();
+    this.confirmButton.setInteractive({ useHandCursor: true });
+    this.cancelButton.setInteractive({ useHandCursor: true });
+    [this.modalOverlay, this.modalPanel, this.modalText, this.confirmButton, this.confirmText, this.cancelButton, this.cancelText]
+      .forEach((element) => element.setVisible(true));
+  }
+
+  closeModal() {
+    this.modalAction = null;
+    this.modalOverlay.disableInteractive();
+    this.confirmButton.disableInteractive();
+    this.cancelButton.disableInteractive();
+    [this.modalOverlay, this.modalPanel, this.modalText, this.confirmButton, this.confirmText, this.cancelButton, this.cancelText]
+      .forEach((element) => element.setVisible(false));
+  }
+
+  showMessage(message) {
+    this.messageText.setText(message || '');
+  }
+
+  cleanup() {
+    if (this.cleanupDone) return;
+    this.cleanupDone = true;
+    this.slotCards.forEach((card) => {
+      [card.continueControl, card.newControl, card.resetControl].forEach((control) => {
+        control.button.off('pointerdown', control.handler);
+      });
+    });
+    this.confirmButton.off('pointerdown', this.onConfirm);
+    this.cancelButton.off('pointerdown', this.onCancel);
+    this.events.off(Phaser.Scenes.Events.SHUTDOWN, this.cleanup, this);
+    this.events.off(Phaser.Scenes.Events.DESTROY, this.cleanup, this);
+    this.modalAction = null;
+    this.slotCards = [];
+  }
+}
+
 const PLAYER_SPEED = 260;
 const SURFACE_TILE_INDICES = Object.freeze({ G: 0, S: 1, W: 2, R: 3 });
 const WORLD_OBJECT_TYPES = Object.freeze(['TREE', 'ROCK', 'BERRY_BUSH']);
@@ -2855,12 +3205,22 @@ class GameScene extends Phaser.Scene {
     super('GameScene');
   }
 
+  init(data) {
+    this.activeSlotId = data && (data.slotId === 1 || data.slotId === 2) ? data.slotId : null;
+    this.launchMode = data && (data.mode === 'new' || data.mode === 'continue') ? data.mode : null;
+  }
+
   create() {
+    if (this.activeSlotId === null || this.launchMode === null) {
+      this.scene.start('MenuScene', { message: 'Не удалось начать игру: слот или режим не выбран.' });
+      return;
+    }
+    this.saveSlotManager = new SaveSlotManager();
     this.inventoryModel = new InventoryModel();
     this.craftingModel = new CraftingModel(this.inventoryModel);
     this.playerStatsModel = new PlayerStatsModel();
     this.dayNightSystem = new DayNightSystem();
-    this.saveSystem = new SaveSystem();
+    this.saveSystem = new SaveSystem(this.saveSlotManager, this.activeSlotId);
     this.isApplyingSave = false;
     this.isDeathHandled = false;
     this.createWorld();
@@ -2881,7 +3241,9 @@ class GameScene extends Phaser.Scene {
     this.createBuildingInterface();
     this.createCombatInterface();
     this.createSaveInterface();
+    this.createMenuExitInterface();
     this.registerLifecycleHandlers();
+    this.initializeSelectedSlot();
   }
 
   isPlayerDead() {
@@ -2896,6 +3258,7 @@ class GameScene extends Phaser.Scene {
       (this.inventoryUI && this.inventoryUI.isOpen)
       || (this.craftingUI && this.craftingUI.isOpen)
       || (this.chestUI && this.chestUI.isOpen)
+      || this.exitConfirmOpen
     );
   }
 
@@ -2931,11 +3294,11 @@ class GameScene extends Phaser.Scene {
   }
 
   canSave() {
-    return !this.isApplyingSave && !this.isPlayerDead();
+    return !this.isApplyingSave && !this.isPlayerDead() && !this.exitConfirmOpen;
   }
 
   canLoad() {
-    return !this.isApplyingSave;
+    return !this.isApplyingSave && !this.exitConfirmOpen;
   }
 
   createWorld() {
@@ -3113,16 +3476,18 @@ class GameScene extends Phaser.Scene {
   }
 
   createPlayer() {
-    const playerTexture = this.make.graphics({ x: 0, y: 0, add: false });
-    playerTexture.fillStyle(0x163a59, 1);
-    playerTexture.fillRoundedRect(0, 0, 40, 40, 8);
-    playerTexture.fillStyle(0x4fc3f7, 1);
-    playerTexture.fillRoundedRect(4, 4, 32, 32, 6);
-    playerTexture.fillStyle(0xffffff, 1);
-    playerTexture.fillCircle(14, 17, 4);
-    playerTexture.fillCircle(26, 17, 4);
-    playerTexture.generateTexture('player', 40, 40);
-    playerTexture.destroy();
+    if (!this.textures.exists('player')) {
+      const playerTexture = this.make.graphics({ x: 0, y: 0, add: false });
+      playerTexture.fillStyle(0x163a59, 1);
+      playerTexture.fillRoundedRect(0, 0, 40, 40, 8);
+      playerTexture.fillStyle(0x4fc3f7, 1);
+      playerTexture.fillRoundedRect(4, 4, 32, 32, 6);
+      playerTexture.fillStyle(0xffffff, 1);
+      playerTexture.fillCircle(14, 17, 4);
+      playerTexture.fillCircle(26, 17, 4);
+      playerTexture.generateTexture('player', 40, 40);
+      playerTexture.destroy();
+    }
 
     const { col, row } = FixedMapData.playerStart;
 
@@ -4539,6 +4904,29 @@ class GameScene extends Phaser.Scene {
     this.positionUseButton();
   }
 
+  initializeSelectedSlot() {
+    if (this.launchMode === 'continue') {
+      if (!this.loadGame()) {
+        this.scene.start('MenuScene', { message: 'Не удалось загрузить выбранное сохранение.' });
+      }
+      return;
+    }
+
+    const slotState = this.saveSlotManager.inspectSlot(this.activeSlotId);
+    if (slotState.status !== 'EMPTY') {
+      this.scene.start('MenuScene', {
+        message: slotState.status === 'CORRUPT'
+          ? 'Новая игра не создана: слот повреждён и требует сброса.'
+          : 'Новая игра не создана: выбранный слот уже занят.'
+      });
+      return;
+    }
+    const result = this.saveSystem.save(this.createSaveState());
+    if (!result.success) {
+      this.scene.start('MenuScene', { message: 'Не удалось создать сохранение: хранилище недоступно.' });
+    }
+  }
+
   createSaveState() {
     const stats = this.playerStatsModel.exportState();
     return { version: 1, savedAt: Date.now(), player: { x: this.player.x, y: this.player.y, ...stats },
@@ -4676,6 +5064,122 @@ class GameScene extends Phaser.Scene {
     this.input.off('pointerup', this.onSavePointerUp); this.input.off('pointerupoutside', this.onSavePointerUp); window.removeEventListener('pointerup', this.onSaveWindowUp); window.removeEventListener('pointercancel', this.onSaveWindowUp); window.removeEventListener('blur', this.onSaveBlur); document.removeEventListener('visibilitychange', this.onSaveVisibility);
     this.events.off(Phaser.Scenes.Events.SHUTDOWN, this.cleanupSaveInterface, this); this.events.off(Phaser.Scenes.Events.DESTROY, this.cleanupSaveInterface, this);
     [this.saveControl.button,this.saveControl.text,this.loadControl.button,this.loadControl.text].forEach((o)=>{if(o.active)o.destroy();}); this.saveControl = this.loadControl = null;
+  }
+
+  createMenuExitInterface() {
+    this.exitConfirmOpen = false;
+    this.exitTransitionLocked = false;
+    this.menuExitCleanupDone = false;
+    this.menuControl = {
+      button: this.add.rectangle(590, 42, 82, 40, 0x45556a, 0.95)
+        .setStrokeStyle(2, 0xcbe9ff, 0.8).setScrollFactor(0)
+        .setDepth(INTERFACE_DEPTH + 12).setInteractive({ useHandCursor: true }),
+      text: this.add.text(590, 42, 'МЕНЮ', {
+        fontFamily: 'Arial, sans-serif', fontSize: '13px', fontStyle: 'bold', color: '#ffffff'
+      }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 13)
+    };
+    const modalDepth = INTERFACE_DEPTH + 100;
+    this.exitModalOverlay = this.add.rectangle(480, 270, 960, 540, 0x000000, 0.72)
+      .setScrollFactor(0).setDepth(modalDepth).setVisible(false);
+    this.exitModalPanel = this.add.rectangle(480, 270, 570, 220, 0x17232d, 1)
+      .setStrokeStyle(3, 0xbad5e8, 0.9).setScrollFactor(0).setDepth(modalDepth + 1).setVisible(false);
+    this.exitModalText = this.add.text(480, 225, 'Сохранить игру и выйти в меню?', {
+      fontFamily: 'Arial, sans-serif', fontSize: '22px', fontStyle: 'bold', color: '#ffffff'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(modalDepth + 2).setVisible(false);
+    this.exitConfirmButton = this.add.rectangle(390, 325, 160, 46, 0x3d7651, 1)
+      .setStrokeStyle(2, 0xcbe9ff, 0.85).setScrollFactor(0).setDepth(modalDepth + 2).setVisible(false);
+    this.exitConfirmText = this.add.text(390, 325, 'СОХРАНИТЬ', {
+      fontFamily: 'Arial, sans-serif', fontSize: '15px', fontStyle: 'bold', color: '#ffffff'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(modalDepth + 3).setVisible(false);
+    this.exitCancelButton = this.add.rectangle(570, 325, 160, 46, 0x5d3e43, 1)
+      .setStrokeStyle(2, 0xcbe9ff, 0.85).setScrollFactor(0).setDepth(modalDepth + 2).setVisible(false);
+    this.exitCancelText = this.add.text(570, 325, 'ОТМЕНА', {
+      fontFamily: 'Arial, sans-serif', fontSize: '15px', fontStyle: 'bold', color: '#ffffff'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(modalDepth + 3).setVisible(false);
+
+    this.onMenuControlDown = (pointer, localX, localY, event) => {
+      if (event && event.stopPropagation) event.stopPropagation();
+      if (!this.isApplyingSave && !this.exitTransitionLocked) this.showExitConfirmation();
+    };
+    this.onExitConfirmDown = (pointer, localX, localY, event) => {
+      if (event && event.stopPropagation) event.stopPropagation();
+      this.saveAndExitToMenu();
+    };
+    this.onExitCancelDown = (pointer, localX, localY, event) => {
+      if (event && event.stopPropagation) event.stopPropagation();
+      this.hideExitConfirmation();
+    };
+    this.menuControl.button.on('pointerdown', this.onMenuControlDown);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.cleanupMenuExitInterface, this);
+    this.events.once(Phaser.Scenes.Events.DESTROY, this.cleanupMenuExitInterface, this);
+  }
+
+  showExitConfirmation() {
+    if (this.exitConfirmOpen || this.exitTransitionLocked) return;
+    this.exitConfirmOpen = true;
+    this.cancelInteractionHold();
+    if (this.virtualJoystick) this.virtualJoystick.reset();
+    if (this.player && this.player.body) this.player.setVelocity(0, 0);
+    if (this.input.keyboard) this.input.keyboard.resetKeys();
+    this.exitModalOverlay.setInteractive();
+    this.exitConfirmButton.setInteractive({ useHandCursor: true });
+    this.exitCancelButton.setInteractive({ useHandCursor: true });
+    this.exitConfirmButton.on('pointerdown', this.onExitConfirmDown);
+    this.exitCancelButton.on('pointerdown', this.onExitCancelDown);
+    [this.exitModalOverlay, this.exitModalPanel, this.exitModalText, this.exitConfirmButton,
+      this.exitConfirmText, this.exitCancelButton, this.exitCancelText]
+      .forEach((element) => element.setVisible(true));
+  }
+
+  hideExitConfirmation() {
+    if (!this.exitConfirmOpen) return;
+    this.exitConfirmOpen = false;
+    this.exitModalOverlay.disableInteractive();
+    this.exitConfirmButton.disableInteractive();
+    this.exitCancelButton.disableInteractive();
+    this.exitConfirmButton.off('pointerdown', this.onExitConfirmDown);
+    this.exitCancelButton.off('pointerdown', this.onExitCancelDown);
+    [this.exitModalOverlay, this.exitModalPanel, this.exitModalText, this.exitConfirmButton,
+      this.exitConfirmText, this.exitCancelButton, this.exitCancelText]
+      .forEach((element) => element.setVisible(false));
+  }
+
+  saveAndExitToMenu() {
+    if (!this.exitConfirmOpen || this.exitTransitionLocked || this.isPlayerDead()) {
+      if (this.isPlayerDead()) {
+        this.hideExitConfirmation();
+        this.showInteractionMessage('Нельзя сохраняться после смерти');
+      }
+      return false;
+    }
+    this.prepareForSaveOperation();
+    const result = this.saveSystem.save(this.createSaveState());
+    if (!result.success) {
+      this.hideExitConfirmation();
+      this.showInteractionMessage('Ошибка локального хранилища');
+      return false;
+    }
+    this.exitTransitionLocked = true;
+    this.scene.start('MenuScene');
+    return true;
+  }
+
+  cleanupMenuExitInterface() {
+    if (this.menuExitCleanupDone) return;
+    this.menuExitCleanupDone = true;
+    this.exitConfirmOpen = false;
+    if (this.exitConfirmButton) this.exitConfirmButton.off('pointerdown', this.onExitConfirmDown);
+    if (this.exitCancelButton) this.exitCancelButton.off('pointerdown', this.onExitCancelDown);
+    if (this.menuControl && this.menuControl.button) {
+      this.menuControl.button.off('pointerdown', this.onMenuControlDown);
+    }
+    this.events.off(Phaser.Scenes.Events.SHUTDOWN, this.cleanupMenuExitInterface, this);
+    this.events.off(Phaser.Scenes.Events.DESTROY, this.cleanupMenuExitInterface, this);
+    const elements = this.menuControl ? [this.menuControl.button, this.menuControl.text] : [];
+    elements.push(this.exitModalOverlay, this.exitModalPanel, this.exitModalText,
+      this.exitConfirmButton, this.exitConfirmText, this.exitCancelButton, this.exitCancelText);
+    elements.forEach((element) => { if (element && element.active) element.destroy(); });
+    this.menuControl = null;
   }
 
   createCombatInterface() {
@@ -5472,6 +5976,10 @@ class GameScene extends Phaser.Scene {
   update(time, delta) {
     if (this.survivalCleanupDone || !this.playerStatsModel) return;
     if (this.isApplyingSave) return;
+    if (this.exitConfirmOpen && Phaser.Input.Keyboard.JustDown(this.cancelBuildKey)) {
+      this.hideExitConfirmation();
+      return;
+    }
     this.dayNightSystem.update(Number.isFinite(delta) ? Math.max(delta, 0) : 0);
     this.applyDayNightVisuals(false);
     if (this.projectileSystem) this.projectileSystem.update();
@@ -5593,7 +6101,7 @@ const config = {
       debug: false
     }
   },
-  scene: GameScene
+  scene: [MenuScene, GameScene]
 };
 
 new Phaser.Game(config);

@@ -34,12 +34,22 @@ class GameScene extends Phaser.Scene {
     super('GameScene');
   }
 
+  init(data) {
+    this.activeSlotId = data && (data.slotId === 1 || data.slotId === 2) ? data.slotId : null;
+    this.launchMode = data && (data.mode === 'new' || data.mode === 'continue') ? data.mode : null;
+  }
+
   create() {
+    if (this.activeSlotId === null || this.launchMode === null) {
+      this.scene.start('MenuScene', { message: 'Не удалось начать игру: слот или режим не выбран.' });
+      return;
+    }
+    this.saveSlotManager = new SaveSlotManager();
     this.inventoryModel = new InventoryModel();
     this.craftingModel = new CraftingModel(this.inventoryModel);
     this.playerStatsModel = new PlayerStatsModel();
     this.dayNightSystem = new DayNightSystem();
-    this.saveSystem = new SaveSystem();
+    this.saveSystem = new SaveSystem(this.saveSlotManager, this.activeSlotId);
     this.isApplyingSave = false;
     this.isDeathHandled = false;
     this.createWorld();
@@ -60,7 +70,9 @@ class GameScene extends Phaser.Scene {
     this.createBuildingInterface();
     this.createCombatInterface();
     this.createSaveInterface();
+    this.createMenuExitInterface();
     this.registerLifecycleHandlers();
+    this.initializeSelectedSlot();
   }
 
   isPlayerDead() {
@@ -75,6 +87,7 @@ class GameScene extends Phaser.Scene {
       (this.inventoryUI && this.inventoryUI.isOpen)
       || (this.craftingUI && this.craftingUI.isOpen)
       || (this.chestUI && this.chestUI.isOpen)
+      || this.exitConfirmOpen
     );
   }
 
@@ -110,11 +123,11 @@ class GameScene extends Phaser.Scene {
   }
 
   canSave() {
-    return !this.isApplyingSave && !this.isPlayerDead();
+    return !this.isApplyingSave && !this.isPlayerDead() && !this.exitConfirmOpen;
   }
 
   canLoad() {
-    return !this.isApplyingSave;
+    return !this.isApplyingSave && !this.exitConfirmOpen;
   }
 
   createWorld() {
@@ -292,16 +305,18 @@ class GameScene extends Phaser.Scene {
   }
 
   createPlayer() {
-    const playerTexture = this.make.graphics({ x: 0, y: 0, add: false });
-    playerTexture.fillStyle(0x163a59, 1);
-    playerTexture.fillRoundedRect(0, 0, 40, 40, 8);
-    playerTexture.fillStyle(0x4fc3f7, 1);
-    playerTexture.fillRoundedRect(4, 4, 32, 32, 6);
-    playerTexture.fillStyle(0xffffff, 1);
-    playerTexture.fillCircle(14, 17, 4);
-    playerTexture.fillCircle(26, 17, 4);
-    playerTexture.generateTexture('player', 40, 40);
-    playerTexture.destroy();
+    if (!this.textures.exists('player')) {
+      const playerTexture = this.make.graphics({ x: 0, y: 0, add: false });
+      playerTexture.fillStyle(0x163a59, 1);
+      playerTexture.fillRoundedRect(0, 0, 40, 40, 8);
+      playerTexture.fillStyle(0x4fc3f7, 1);
+      playerTexture.fillRoundedRect(4, 4, 32, 32, 6);
+      playerTexture.fillStyle(0xffffff, 1);
+      playerTexture.fillCircle(14, 17, 4);
+      playerTexture.fillCircle(26, 17, 4);
+      playerTexture.generateTexture('player', 40, 40);
+      playerTexture.destroy();
+    }
 
     const { col, row } = FixedMapData.playerStart;
 
@@ -1718,6 +1733,29 @@ class GameScene extends Phaser.Scene {
     this.positionUseButton();
   }
 
+  initializeSelectedSlot() {
+    if (this.launchMode === 'continue') {
+      if (!this.loadGame()) {
+        this.scene.start('MenuScene', { message: 'Не удалось загрузить выбранное сохранение.' });
+      }
+      return;
+    }
+
+    const slotState = this.saveSlotManager.inspectSlot(this.activeSlotId);
+    if (slotState.status !== 'EMPTY') {
+      this.scene.start('MenuScene', {
+        message: slotState.status === 'CORRUPT'
+          ? 'Новая игра не создана: слот повреждён и требует сброса.'
+          : 'Новая игра не создана: выбранный слот уже занят.'
+      });
+      return;
+    }
+    const result = this.saveSystem.save(this.createSaveState());
+    if (!result.success) {
+      this.scene.start('MenuScene', { message: 'Не удалось создать сохранение: хранилище недоступно.' });
+    }
+  }
+
   createSaveState() {
     const stats = this.playerStatsModel.exportState();
     return { version: 1, savedAt: Date.now(), player: { x: this.player.x, y: this.player.y, ...stats },
@@ -1855,6 +1893,122 @@ class GameScene extends Phaser.Scene {
     this.input.off('pointerup', this.onSavePointerUp); this.input.off('pointerupoutside', this.onSavePointerUp); window.removeEventListener('pointerup', this.onSaveWindowUp); window.removeEventListener('pointercancel', this.onSaveWindowUp); window.removeEventListener('blur', this.onSaveBlur); document.removeEventListener('visibilitychange', this.onSaveVisibility);
     this.events.off(Phaser.Scenes.Events.SHUTDOWN, this.cleanupSaveInterface, this); this.events.off(Phaser.Scenes.Events.DESTROY, this.cleanupSaveInterface, this);
     [this.saveControl.button,this.saveControl.text,this.loadControl.button,this.loadControl.text].forEach((o)=>{if(o.active)o.destroy();}); this.saveControl = this.loadControl = null;
+  }
+
+  createMenuExitInterface() {
+    this.exitConfirmOpen = false;
+    this.exitTransitionLocked = false;
+    this.menuExitCleanupDone = false;
+    this.menuControl = {
+      button: this.add.rectangle(590, 42, 82, 40, 0x45556a, 0.95)
+        .setStrokeStyle(2, 0xcbe9ff, 0.8).setScrollFactor(0)
+        .setDepth(INTERFACE_DEPTH + 12).setInteractive({ useHandCursor: true }),
+      text: this.add.text(590, 42, 'МЕНЮ', {
+        fontFamily: 'Arial, sans-serif', fontSize: '13px', fontStyle: 'bold', color: '#ffffff'
+      }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 13)
+    };
+    const modalDepth = INTERFACE_DEPTH + 100;
+    this.exitModalOverlay = this.add.rectangle(480, 270, 960, 540, 0x000000, 0.72)
+      .setScrollFactor(0).setDepth(modalDepth).setVisible(false);
+    this.exitModalPanel = this.add.rectangle(480, 270, 570, 220, 0x17232d, 1)
+      .setStrokeStyle(3, 0xbad5e8, 0.9).setScrollFactor(0).setDepth(modalDepth + 1).setVisible(false);
+    this.exitModalText = this.add.text(480, 225, 'Сохранить игру и выйти в меню?', {
+      fontFamily: 'Arial, sans-serif', fontSize: '22px', fontStyle: 'bold', color: '#ffffff'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(modalDepth + 2).setVisible(false);
+    this.exitConfirmButton = this.add.rectangle(390, 325, 160, 46, 0x3d7651, 1)
+      .setStrokeStyle(2, 0xcbe9ff, 0.85).setScrollFactor(0).setDepth(modalDepth + 2).setVisible(false);
+    this.exitConfirmText = this.add.text(390, 325, 'СОХРАНИТЬ', {
+      fontFamily: 'Arial, sans-serif', fontSize: '15px', fontStyle: 'bold', color: '#ffffff'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(modalDepth + 3).setVisible(false);
+    this.exitCancelButton = this.add.rectangle(570, 325, 160, 46, 0x5d3e43, 1)
+      .setStrokeStyle(2, 0xcbe9ff, 0.85).setScrollFactor(0).setDepth(modalDepth + 2).setVisible(false);
+    this.exitCancelText = this.add.text(570, 325, 'ОТМЕНА', {
+      fontFamily: 'Arial, sans-serif', fontSize: '15px', fontStyle: 'bold', color: '#ffffff'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(modalDepth + 3).setVisible(false);
+
+    this.onMenuControlDown = (pointer, localX, localY, event) => {
+      if (event && event.stopPropagation) event.stopPropagation();
+      if (!this.isApplyingSave && !this.exitTransitionLocked) this.showExitConfirmation();
+    };
+    this.onExitConfirmDown = (pointer, localX, localY, event) => {
+      if (event && event.stopPropagation) event.stopPropagation();
+      this.saveAndExitToMenu();
+    };
+    this.onExitCancelDown = (pointer, localX, localY, event) => {
+      if (event && event.stopPropagation) event.stopPropagation();
+      this.hideExitConfirmation();
+    };
+    this.menuControl.button.on('pointerdown', this.onMenuControlDown);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.cleanupMenuExitInterface, this);
+    this.events.once(Phaser.Scenes.Events.DESTROY, this.cleanupMenuExitInterface, this);
+  }
+
+  showExitConfirmation() {
+    if (this.exitConfirmOpen || this.exitTransitionLocked) return;
+    this.exitConfirmOpen = true;
+    this.cancelInteractionHold();
+    if (this.virtualJoystick) this.virtualJoystick.reset();
+    if (this.player && this.player.body) this.player.setVelocity(0, 0);
+    if (this.input.keyboard) this.input.keyboard.resetKeys();
+    this.exitModalOverlay.setInteractive();
+    this.exitConfirmButton.setInteractive({ useHandCursor: true });
+    this.exitCancelButton.setInteractive({ useHandCursor: true });
+    this.exitConfirmButton.on('pointerdown', this.onExitConfirmDown);
+    this.exitCancelButton.on('pointerdown', this.onExitCancelDown);
+    [this.exitModalOverlay, this.exitModalPanel, this.exitModalText, this.exitConfirmButton,
+      this.exitConfirmText, this.exitCancelButton, this.exitCancelText]
+      .forEach((element) => element.setVisible(true));
+  }
+
+  hideExitConfirmation() {
+    if (!this.exitConfirmOpen) return;
+    this.exitConfirmOpen = false;
+    this.exitModalOverlay.disableInteractive();
+    this.exitConfirmButton.disableInteractive();
+    this.exitCancelButton.disableInteractive();
+    this.exitConfirmButton.off('pointerdown', this.onExitConfirmDown);
+    this.exitCancelButton.off('pointerdown', this.onExitCancelDown);
+    [this.exitModalOverlay, this.exitModalPanel, this.exitModalText, this.exitConfirmButton,
+      this.exitConfirmText, this.exitCancelButton, this.exitCancelText]
+      .forEach((element) => element.setVisible(false));
+  }
+
+  saveAndExitToMenu() {
+    if (!this.exitConfirmOpen || this.exitTransitionLocked || this.isPlayerDead()) {
+      if (this.isPlayerDead()) {
+        this.hideExitConfirmation();
+        this.showInteractionMessage('Нельзя сохраняться после смерти');
+      }
+      return false;
+    }
+    this.prepareForSaveOperation();
+    const result = this.saveSystem.save(this.createSaveState());
+    if (!result.success) {
+      this.hideExitConfirmation();
+      this.showInteractionMessage('Ошибка локального хранилища');
+      return false;
+    }
+    this.exitTransitionLocked = true;
+    this.scene.start('MenuScene');
+    return true;
+  }
+
+  cleanupMenuExitInterface() {
+    if (this.menuExitCleanupDone) return;
+    this.menuExitCleanupDone = true;
+    this.exitConfirmOpen = false;
+    if (this.exitConfirmButton) this.exitConfirmButton.off('pointerdown', this.onExitConfirmDown);
+    if (this.exitCancelButton) this.exitCancelButton.off('pointerdown', this.onExitCancelDown);
+    if (this.menuControl && this.menuControl.button) {
+      this.menuControl.button.off('pointerdown', this.onMenuControlDown);
+    }
+    this.events.off(Phaser.Scenes.Events.SHUTDOWN, this.cleanupMenuExitInterface, this);
+    this.events.off(Phaser.Scenes.Events.DESTROY, this.cleanupMenuExitInterface, this);
+    const elements = this.menuControl ? [this.menuControl.button, this.menuControl.text] : [];
+    elements.push(this.exitModalOverlay, this.exitModalPanel, this.exitModalText,
+      this.exitConfirmButton, this.exitConfirmText, this.exitCancelButton, this.exitCancelText);
+    elements.forEach((element) => { if (element && element.active) element.destroy(); });
+    this.menuControl = null;
   }
 
   createCombatInterface() {
@@ -2651,6 +2805,10 @@ class GameScene extends Phaser.Scene {
   update(time, delta) {
     if (this.survivalCleanupDone || !this.playerStatsModel) return;
     if (this.isApplyingSave) return;
+    if (this.exitConfirmOpen && Phaser.Input.Keyboard.JustDown(this.cancelBuildKey)) {
+      this.hideExitConfirmation();
+      return;
+    }
     this.dayNightSystem.update(Number.isFinite(delta) ? Math.max(delta, 0) : 0);
     this.applyDayNightVisuals(false);
     if (this.projectileSystem) this.projectileSystem.update();

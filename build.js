@@ -22,6 +22,7 @@ const requiredRelativePaths = [
   'src/systems/BuildingSystem.js',
   'src/systems/CreatureSystem.js',
   'src/systems/ProjectileSystem.js',
+  'src/systems/SaveSlotManager.js',
   'src/systems/SaveSystem.js',
   'src/systems/PlayerStatsModel.js',
   'src/systems/GroundItemSystem.js',
@@ -30,6 +31,7 @@ const requiredRelativePaths = [
   'src/ui/CraftingUI.js',
   'src/ui/ChestUI.js',
   'src/VirtualJoystick.js',
+  'src/MenuScene.js',
   'src/GameScene.js',
   'src/main.js'
 ];
@@ -72,6 +74,7 @@ const craftingModel = fs.readFileSync(requireFile('src/systems/CraftingModel.js'
 const buildingSystem = fs.readFileSync(requireFile('src/systems/BuildingSystem.js'), 'utf8');
 const creatureSystem = fs.readFileSync(requireFile('src/systems/CreatureSystem.js'), 'utf8');
 const projectileSystem = fs.readFileSync(requireFile('src/systems/ProjectileSystem.js'), 'utf8');
+const saveSlotManager = fs.readFileSync(requireFile('src/systems/SaveSlotManager.js'), 'utf8');
 const saveSystem = fs.readFileSync(requireFile('src/systems/SaveSystem.js'), 'utf8');
 const playerStatsModel = fs.readFileSync(requireFile('src/systems/PlayerStatsModel.js'), 'utf8');
 const groundItemSystem = fs.readFileSync(requireFile('src/systems/GroundItemSystem.js'), 'utf8');
@@ -80,6 +83,7 @@ const inventoryUI = fs.readFileSync(requireFile('src/ui/InventoryUI.js'), 'utf8'
 const craftingUI = fs.readFileSync(requireFile('src/ui/CraftingUI.js'), 'utf8');
 const chestUI = fs.readFileSync(requireFile('src/ui/ChestUI.js'), 'utf8');
 const virtualJoystick = fs.readFileSync(requireFile('src/VirtualJoystick.js'), 'utf8');
+const menuScene = fs.readFileSync(requireFile('src/MenuScene.js'), 'utf8');
 const gameScene = fs.readFileSync(requireFile('src/GameScene.js'), 'utf8');
 const main = fs.readFileSync(requireFile('src/main.js'), 'utf8');
 
@@ -125,6 +129,7 @@ ${safeScript(craftingModel)}
 ${safeScript(buildingSystem)}
 ${safeScript(creatureSystem)}
 ${safeScript(projectileSystem)}
+${safeScript(saveSlotManager)}
 ${safeScript(saveSystem)}
 ${safeScript(playerStatsModel)}
 ${safeScript(groundItemSystem)}
@@ -133,6 +138,7 @@ ${safeScript(inventoryUI)}
 ${safeScript(craftingUI)}
 ${safeScript(chestUI)}
 ${safeScript(virtualJoystick)}
+${safeScript(menuScene)}
 ${safeScript(gameScene)}
 ${safeScript(main)}
     </script>
@@ -169,6 +175,7 @@ const pagesHtml = `<!doctype html>
     <script src="./src/systems/BuildingSystem.js"></script>
     <script src="./src/systems/CreatureSystem.js"></script>
     <script src="./src/systems/ProjectileSystem.js"></script>
+    <script src="./src/systems/SaveSlotManager.js"></script>
     <script src="./src/systems/SaveSystem.js"></script>
     <script src="./src/systems/PlayerStatsModel.js"></script>
     <script src="./src/systems/GroundItemSystem.js"></script>
@@ -177,6 +184,7 @@ const pagesHtml = `<!doctype html>
     <script src="./src/ui/CraftingUI.js"></script>
     <script src="./src/ui/ChestUI.js"></script>
     <script src="./src/VirtualJoystick.js"></script>
+    <script src="./src/MenuScene.js"></script>
     <script src="./src/GameScene.js"></script>
     <script src="./src/main.js"></script>
   </body>
@@ -224,6 +232,7 @@ fs.copyFileSync(requireFile('src/systems/CraftingModel.js'), path.join(docsSyste
 fs.copyFileSync(requireFile('src/systems/BuildingSystem.js'), path.join(docsSystemsDirectory, 'BuildingSystem.js'));
 fs.copyFileSync(requireFile('src/systems/CreatureSystem.js'), path.join(docsSystemsDirectory, 'CreatureSystem.js'));
 fs.copyFileSync(requireFile('src/systems/ProjectileSystem.js'), path.join(docsSystemsDirectory, 'ProjectileSystem.js'));
+fs.copyFileSync(requireFile('src/systems/SaveSlotManager.js'), path.join(docsSystemsDirectory, 'SaveSlotManager.js'));
 fs.copyFileSync(requireFile('src/systems/SaveSystem.js'), path.join(docsSystemsDirectory, 'SaveSystem.js'));
 fs.copyFileSync(requireFile('src/systems/PlayerStatsModel.js'), path.join(docsSystemsDirectory, 'PlayerStatsModel.js'));
 fs.copyFileSync(requireFile('src/systems/GroundItemSystem.js'), path.join(docsSystemsDirectory, 'GroundItemSystem.js'));
@@ -232,6 +241,7 @@ fs.copyFileSync(requireFile('src/ui/InventoryUI.js'), path.join(docsUiDirectory,
 fs.copyFileSync(requireFile('src/ui/CraftingUI.js'), path.join(docsUiDirectory, 'CraftingUI.js'));
 fs.copyFileSync(requireFile('src/ui/ChestUI.js'), path.join(docsUiDirectory, 'ChestUI.js'));
 fs.copyFileSync(requireFile('src/VirtualJoystick.js'), path.join(docsSrcDirectory, 'VirtualJoystick.js'));
+fs.copyFileSync(requireFile('src/MenuScene.js'), path.join(docsSrcDirectory, 'MenuScene.js'));
 fs.copyFileSync(requireFile('src/GameScene.js'), path.join(docsSrcDirectory, 'GameScene.js'));
 fs.copyFileSync(requireFile('src/main.js'), path.join(docsSrcDirectory, 'main.js'));
 writeFileWithSize(path.join(docsDirectory, '.nojekyll'), '');
