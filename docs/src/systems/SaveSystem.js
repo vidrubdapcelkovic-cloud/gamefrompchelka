@@ -11,6 +11,7 @@ class SaveSystem {
     try {
       if (!state || state.version !== VERSION || !Number.isFinite(state.savedAt)) return null;
       const p = state.player, inv = state.inventory, w = state.world;
+      const dayNight = DayNightSystem.normalizeState(state.dayNight);
       if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)
         || !Number.isFinite(p.health) || p.health < 0 || p.health > 100
         || !Number.isFinite(p.hunger) || p.hunger < 0 || p.hunger > 100) return null;
@@ -52,6 +53,7 @@ class SaveSystem {
       });
       return { version: 1, savedAt: state.savedAt,
         player: { x: p.x, y: p.y, health: p.health, hunger: p.hunger },
+        dayNight,
         inventory: { activeHotbarIndex: inv.activeHotbarIndex, slots },
         world: { removedObjectIds, groundItems, walls, deadCreatureIds } };
     } catch { return null; }

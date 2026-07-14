@@ -885,6 +885,106 @@ class ChestStorageModel {
   }
 }
 
+const DAY_NIGHT_CONFIG = Object.freeze({
+  dayDurationMs: 600000,
+  minutesPerDay: 24 * 60,
+  startDayNumber: 1,
+  startHour: 8,
+  dayStartHour: 6,
+  nightStartHour: 20,
+  dawnStartHour: 6,
+  dawnEndHour: 8,
+  duskStartHour: 18,
+  duskEndHour: 20,
+  maximumNightAlpha: 0.45
+});
+
+class DayNightSystem {
+  constructor(initialState) {
+    const normalized = DayNightSystem.normalizeState(initialState);
+    this.dayNumber = normalized.dayNumber;
+    this.timeOfDayMs = normalized.timeOfDayMs;
+  }
+
+  static getStartTimeOfDayMs() {
+    return DAY_NIGHT_CONFIG.dayDurationMs * DAY_NIGHT_CONFIG.startHour / 24;
+  }
+
+  static normalizeState(state) {
+    let dayNumber = state && Number.isInteger(state.dayNumber) && state.dayNumber >= 1
+      ? state.dayNumber
+      : DAY_NIGHT_CONFIG.startDayNumber;
+    let timeOfDayMs = state && Number.isFinite(state.timeOfDayMs) && state.timeOfDayMs >= 0
+      ? state.timeOfDayMs
+      : DayNightSystem.getStartTimeOfDayMs();
+    const elapsedDays = Math.floor(timeOfDayMs / DAY_NIGHT_CONFIG.dayDurationMs);
+    dayNumber += elapsedDays;
+    timeOfDayMs %= DAY_NIGHT_CONFIG.dayDurationMs;
+    return { dayNumber, timeOfDayMs };
+  }
+
+  update(delta) {
+    if (!Number.isFinite(delta) || delta <= 0) return false;
+    const total = this.timeOfDayMs + delta;
+    const elapsedDays = Math.floor(total / DAY_NIGHT_CONFIG.dayDurationMs);
+    this.timeOfDayMs = total % DAY_NIGHT_CONFIG.dayDurationMs;
+    if (elapsedDays > 0) this.dayNumber += elapsedDays;
+    return true;
+  }
+
+  getMinuteOfDay() {
+    return Math.floor(
+      this.timeOfDayMs / DAY_NIGHT_CONFIG.dayDurationMs * DAY_NIGHT_CONFIG.minutesPerDay
+    ) % DAY_NIGHT_CONFIG.minutesPerDay;
+  }
+
+  getHours() { return Math.floor(this.getMinuteOfDay() / 60); }
+  getMinutes() { return this.getMinuteOfDay() % 60; }
+
+  getPhase() {
+    const hour = this.getMinuteOfDay() / 60;
+    return hour >= DAY_NIGHT_CONFIG.dayStartHour && hour < DAY_NIGHT_CONFIG.nightStartHour
+      ? 'DAY'
+      : 'NIGHT';
+  }
+
+  getOverlayAlpha() {
+    const hour = this.timeOfDayMs / DAY_NIGHT_CONFIG.dayDurationMs * 24;
+    const maximum = DAY_NIGHT_CONFIG.maximumNightAlpha;
+    if (hour < DAY_NIGHT_CONFIG.dawnStartHour) return maximum;
+    if (hour < DAY_NIGHT_CONFIG.dawnEndHour) {
+      return maximum * (DAY_NIGHT_CONFIG.dawnEndHour - hour)
+        / (DAY_NIGHT_CONFIG.dawnEndHour - DAY_NIGHT_CONFIG.dawnStartHour);
+    }
+    if (hour < DAY_NIGHT_CONFIG.duskStartHour) return 0;
+    if (hour < DAY_NIGHT_CONFIG.duskEndHour) {
+      return maximum * (hour - DAY_NIGHT_CONFIG.duskStartHour)
+        / (DAY_NIGHT_CONFIG.duskEndHour - DAY_NIGHT_CONFIG.duskStartHour);
+    }
+    return maximum;
+  }
+
+  formatHud() {
+    const phaseLabel = this.getPhase() === 'DAY' ? 'День' : 'Ночь';
+    const hours = String(this.getHours()).padStart(2, '0');
+    const minutes = String(this.getMinutes()).padStart(2, '0');
+    return `${phaseLabel} ${this.dayNumber} — ${hours}:${minutes}`;
+  }
+
+  getHudStateKey() {
+    return `${this.dayNumber}:${this.getPhase()}:${this.getMinuteOfDay()}`;
+  }
+
+  exportState() { return { dayNumber: this.dayNumber, timeOfDayMs: this.timeOfDayMs }; }
+
+  importState(state) {
+    const normalized = DayNightSystem.normalizeState(state);
+    this.dayNumber = normalized.dayNumber;
+    this.timeOfDayMs = normalized.timeOfDayMs;
+    return true;
+  }
+}
+
 class CraftingModel {
   constructor(inventoryModel) {
     this.inventoryModel = inventoryModel;
@@ -1464,6 +1564,7 @@ class SaveSystem {
     try {
       if (!state || state.version !== VERSION || !Number.isFinite(state.savedAt)) return null;
       const p = state.player, inv = state.inventory, w = state.world;
+      const dayNight = DayNightSystem.normalizeState(state.dayNight);
       if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)
         || !Number.isFinite(p.health) || p.health < 0 || p.health > 100
         || !Number.isFinite(p.hunger) || p.hunger < 0 || p.hunger > 100) return null;
@@ -1505,6 +1606,7 @@ class SaveSystem {
       });
       return { version: 1, savedAt: state.savedAt,
         player: { x: p.x, y: p.y, health: p.health, hunger: p.hunger },
+        dayNight,
         inventory: { activeHotbarIndex: inv.activeHotbarIndex, slots },
         world: { removedObjectIds, groundItems, walls, deadCreatureIds } };
     } catch { return null; }
@@ -2727,6 +2829,7 @@ const WORLD_OBJECT_DROPS = Object.freeze({
 });
 const WORLD_DEPTH_SCALE = 0.1;
 const INTERFACE_DEPTH = 2000;
+const DAY_NIGHT_OVERLAY_DEPTH = INTERFACE_DEPTH - 100;
 const GROUND_ITEM_PICKUP_RADIUS = 28;
 const BUILDING_DISMANTLE_DURATION_MS = 600;
 const PLAYER_MELEE_ATTACK = Object.freeze({ damage: 10, radius: 52, cooldownMs: 450 });
@@ -2756,6 +2859,7 @@ class GameScene extends Phaser.Scene {
     this.inventoryModel = new InventoryModel();
     this.craftingModel = new CraftingModel(this.inventoryModel);
     this.playerStatsModel = new PlayerStatsModel();
+    this.dayNightSystem = new DayNightSystem();
     this.saveSystem = new SaveSystem();
     this.isApplyingSave = false;
     this.isDeathHandled = false;
@@ -2766,6 +2870,7 @@ class GameScene extends Phaser.Scene {
     this.createCreatureSystem();
     this.createControls();
     this.createCamera();
+    this.createDayNightInterface();
     this.createInterface();
     this.createInteractionInterface();
     this.createVirtualJoystick();
@@ -4199,6 +4304,50 @@ class GameScene extends Phaser.Scene {
     camera.setRoundPixels(true);
   }
 
+  createDayNightInterface() {
+    this.dayNightCleanupDone = false;
+    this.lastDayNightHudStateKey = null;
+    this.dayNightOverlay = this.add.rectangle(480, 270, 960, 540, 0x07162d, 1)
+      .setScrollFactor(0)
+      .setDepth(DAY_NIGHT_OVERLAY_DEPTH);
+    this.dayNightHudText = this.add.text(34, 160, '', {
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '17px',
+      fontStyle: 'bold',
+      color: '#d9edff',
+      backgroundColor: '#111820d9',
+      padding: { x: 10, y: 6 }
+    }).setScrollFactor(0).setDepth(INTERFACE_DEPTH);
+    this.applyDayNightVisuals(true);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.cleanupDayNightInterface, this);
+    this.events.once(Phaser.Scenes.Events.DESTROY, this.cleanupDayNightInterface, this);
+  }
+
+  applyDayNightVisuals(forceHudUpdate) {
+    if (!this.dayNightSystem) return;
+    if (this.dayNightOverlay && this.dayNightOverlay.active) {
+      this.dayNightOverlay.setAlpha(this.dayNightSystem.getOverlayAlpha());
+    }
+    const stateKey = this.dayNightSystem.getHudStateKey();
+    if ((forceHudUpdate || stateKey !== this.lastDayNightHudStateKey)
+      && this.dayNightHudText && this.dayNightHudText.active) {
+      this.dayNightHudText.setText(this.dayNightSystem.formatHud());
+      this.lastDayNightHudStateKey = stateKey;
+    }
+  }
+
+  cleanupDayNightInterface() {
+    if (this.dayNightCleanupDone) return;
+    this.dayNightCleanupDone = true;
+    this.events.off(Phaser.Scenes.Events.SHUTDOWN, this.cleanupDayNightInterface, this);
+    this.events.off(Phaser.Scenes.Events.DESTROY, this.cleanupDayNightInterface, this);
+    if (this.dayNightOverlay && this.dayNightOverlay.active) this.dayNightOverlay.destroy();
+    if (this.dayNightHudText && this.dayNightHudText.active) this.dayNightHudText.destroy();
+    this.dayNightOverlay = null;
+    this.dayNightHudText = null;
+    this.dayNightSystem = null;
+  }
+
   createInterface() {
     const panel = this.add.rectangle(18, 18, 365, 96, 0x111820, 0.82)
       .setOrigin(0)
@@ -4393,6 +4542,7 @@ class GameScene extends Phaser.Scene {
   createSaveState() {
     const stats = this.playerStatsModel.exportState();
     return { version: 1, savedAt: Date.now(), player: { x: this.player.x, y: this.player.y, ...stats },
+      dayNight: this.dayNightSystem.exportState(),
       inventory: { activeHotbarIndex: this.inventoryUI.getActiveHotbarIndex(), slots: this.inventoryModel.exportState() },
       world: {
         removedObjectIds: Array.from(this.runtimeWorldObjects.values()).filter((o) => !o.active).map((o) => o.id),
@@ -4469,6 +4619,8 @@ class GameScene extends Phaser.Scene {
   applySaveState(state) {
     if (!this.inventoryModel.importState(state.inventory.slots)
       || !this.playerStatsModel.importState(state.player)) throw new Error('Ошибка импорта сохранения.');
+    this.dayNightSystem.importState(state.dayNight);
+    this.applyDayNightVisuals(true);
     this.restoreRemovedWorldObjects(state.world.removedObjectIds);
     if (!this.groundItemSystem.restoreState(state.world.groundItems)
       || !this.buildingSystem.restoreState(state.world.walls)
@@ -5320,6 +5472,8 @@ class GameScene extends Phaser.Scene {
   update(time, delta) {
     if (this.survivalCleanupDone || !this.playerStatsModel) return;
     if (this.isApplyingSave) return;
+    this.dayNightSystem.update(Number.isFinite(delta) ? Math.max(delta, 0) : 0);
+    this.applyDayNightVisuals(false);
     if (this.projectileSystem) this.projectileSystem.update();
     const statsDelta = Math.min(Math.max(Number.isFinite(delta) ? delta : 0, 0), 250);
     this.playerStatsModel.update(statsDelta);

@@ -17,6 +17,7 @@ const requiredRelativePaths = [
   'src/systems/HoldActionSystem.js',
   'src/systems/InventoryModel.js',
   'src/systems/ChestStorageModel.js',
+  'src/systems/DayNightSystem.js',
   'src/systems/CraftingModel.js',
   'src/systems/BuildingSystem.js',
   'src/systems/CreatureSystem.js',
@@ -66,6 +67,7 @@ const interactionSystem = fs.readFileSync(requireFile('src/systems/InteractionSy
 const holdActionSystem = fs.readFileSync(requireFile('src/systems/HoldActionSystem.js'), 'utf8');
 const inventoryModel = fs.readFileSync(requireFile('src/systems/InventoryModel.js'), 'utf8');
 const chestStorageModel = fs.readFileSync(requireFile('src/systems/ChestStorageModel.js'), 'utf8');
+const dayNightSystem = fs.readFileSync(requireFile('src/systems/DayNightSystem.js'), 'utf8');
 const craftingModel = fs.readFileSync(requireFile('src/systems/CraftingModel.js'), 'utf8');
 const buildingSystem = fs.readFileSync(requireFile('src/systems/BuildingSystem.js'), 'utf8');
 const creatureSystem = fs.readFileSync(requireFile('src/systems/CreatureSystem.js'), 'utf8');
@@ -118,6 +120,7 @@ ${safeScript(interactionSystem)}
 ${safeScript(holdActionSystem)}
 ${safeScript(inventoryModel)}
 ${safeScript(chestStorageModel)}
+${safeScript(dayNightSystem)}
 ${safeScript(craftingModel)}
 ${safeScript(buildingSystem)}
 ${safeScript(creatureSystem)}
@@ -161,6 +164,7 @@ const pagesHtml = `<!doctype html>
     <script src="./src/systems/HoldActionSystem.js"></script>
     <script src="./src/systems/InventoryModel.js"></script>
     <script src="./src/systems/ChestStorageModel.js"></script>
+    <script src="./src/systems/DayNightSystem.js"></script>
     <script src="./src/systems/CraftingModel.js"></script>
     <script src="./src/systems/BuildingSystem.js"></script>
     <script src="./src/systems/CreatureSystem.js"></script>
@@ -215,6 +219,7 @@ fs.copyFileSync(requireFile('src/systems/InteractionSystem.js'), path.join(docsS
 fs.copyFileSync(requireFile('src/systems/HoldActionSystem.js'), path.join(docsSystemsDirectory, 'HoldActionSystem.js'));
 fs.copyFileSync(requireFile('src/systems/InventoryModel.js'), path.join(docsSystemsDirectory, 'InventoryModel.js'));
 fs.copyFileSync(requireFile('src/systems/ChestStorageModel.js'), path.join(docsSystemsDirectory, 'ChestStorageModel.js'));
+fs.copyFileSync(requireFile('src/systems/DayNightSystem.js'), path.join(docsSystemsDirectory, 'DayNightSystem.js'));
 fs.copyFileSync(requireFile('src/systems/CraftingModel.js'), path.join(docsSystemsDirectory, 'CraftingModel.js'));
 fs.copyFileSync(requireFile('src/systems/BuildingSystem.js'), path.join(docsSystemsDirectory, 'BuildingSystem.js'));
 fs.copyFileSync(requireFile('src/systems/CreatureSystem.js'), path.join(docsSystemsDirectory, 'CreatureSystem.js'));
