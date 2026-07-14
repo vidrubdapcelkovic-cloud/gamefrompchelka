@@ -31,6 +31,7 @@ const requiredRelativePaths = [
   'src/ui/CraftingUI.js',
   'src/ui/ChestUI.js',
   'src/VirtualJoystick.js',
+  'src/controllers/InputController.js',
   'src/MenuScene.js',
   'src/GameScene.js',
   'src/main.js'
@@ -83,6 +84,7 @@ const inventoryUI = fs.readFileSync(requireFile('src/ui/InventoryUI.js'), 'utf8'
 const craftingUI = fs.readFileSync(requireFile('src/ui/CraftingUI.js'), 'utf8');
 const chestUI = fs.readFileSync(requireFile('src/ui/ChestUI.js'), 'utf8');
 const virtualJoystick = fs.readFileSync(requireFile('src/VirtualJoystick.js'), 'utf8');
+const inputController = fs.readFileSync(requireFile('src/controllers/InputController.js'), 'utf8');
 const menuScene = fs.readFileSync(requireFile('src/MenuScene.js'), 'utf8');
 const gameScene = fs.readFileSync(requireFile('src/GameScene.js'), 'utf8');
 const main = fs.readFileSync(requireFile('src/main.js'), 'utf8');
@@ -138,6 +140,7 @@ ${safeScript(inventoryUI)}
 ${safeScript(craftingUI)}
 ${safeScript(chestUI)}
 ${safeScript(virtualJoystick)}
+${safeScript(inputController)}
 ${safeScript(menuScene)}
 ${safeScript(gameScene)}
 ${safeScript(main)}
@@ -184,6 +187,7 @@ const pagesHtml = `<!doctype html>
     <script src="./src/ui/CraftingUI.js"></script>
     <script src="./src/ui/ChestUI.js"></script>
     <script src="./src/VirtualJoystick.js"></script>
+    <script src="./src/controllers/InputController.js"></script>
     <script src="./src/MenuScene.js"></script>
     <script src="./src/GameScene.js"></script>
     <script src="./src/main.js"></script>
@@ -203,11 +207,12 @@ const docsDataDirectory = path.join(docsSrcDirectory, 'data');
 const docsWorldDirectory = path.join(docsSrcDirectory, 'world');
 const docsSystemsDirectory = path.join(docsSrcDirectory, 'systems');
 const docsUiDirectory = path.join(docsSrcDirectory, 'ui');
+const docsControllersDirectory = path.join(docsSrcDirectory, 'controllers');
 const docsStylesDirectory = path.join(docsDirectory, 'styles');
 const assetDirectories = ['images', 'sprites', 'audio', 'maps', 'data']
   .map((name) => path.join(docsDirectory, 'assets', name));
 
-[docsDirectory, docsLibDirectory, docsSrcDirectory, docsDataDirectory, docsWorldDirectory, docsSystemsDirectory, docsUiDirectory, docsStylesDirectory, ...assetDirectories]
+[docsDirectory, docsLibDirectory, docsSrcDirectory, docsDataDirectory, docsWorldDirectory, docsSystemsDirectory, docsUiDirectory, docsControllersDirectory, docsStylesDirectory, ...assetDirectories]
   .forEach(ensureDirectory);
 
 const pagesIndexPath = path.join(docsDirectory, 'index.html');
@@ -241,6 +246,7 @@ fs.copyFileSync(requireFile('src/ui/InventoryUI.js'), path.join(docsUiDirectory,
 fs.copyFileSync(requireFile('src/ui/CraftingUI.js'), path.join(docsUiDirectory, 'CraftingUI.js'));
 fs.copyFileSync(requireFile('src/ui/ChestUI.js'), path.join(docsUiDirectory, 'ChestUI.js'));
 fs.copyFileSync(requireFile('src/VirtualJoystick.js'), path.join(docsSrcDirectory, 'VirtualJoystick.js'));
+fs.copyFileSync(requireFile('src/controllers/InputController.js'), path.join(docsControllersDirectory, 'InputController.js'));
 fs.copyFileSync(requireFile('src/MenuScene.js'), path.join(docsSrcDirectory, 'MenuScene.js'));
 fs.copyFileSync(requireFile('src/GameScene.js'), path.join(docsSrcDirectory, 'GameScene.js'));
 fs.copyFileSync(requireFile('src/main.js'), path.join(docsSrcDirectory, 'main.js'));

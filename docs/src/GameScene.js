@@ -57,21 +57,18 @@ class GameScene extends Phaser.Scene {
     this.createWorldObjects();
     this.createBuildingSystem();
     this.createCreatureSystem();
-    this.createControls();
     this.createCamera();
     this.createDayNightInterface();
     this.createInterface();
     this.createInteractionInterface();
-    this.createVirtualJoystick();
     this.createInventoryUI();
     this.createCraftingUI();
     this.createChestUI();
     this.createSurvivalInterface();
     this.createBuildingInterface();
     this.createCombatInterface();
-    this.createSaveInterface();
     this.createMenuExitInterface();
-    this.registerLifecycleHandlers();
+    this.createInputController();
     this.initializeSelectedSlot();
   }
 
@@ -866,34 +863,28 @@ class GameScene extends Phaser.Scene {
     gameObject.setDepth(bottom * WORLD_DEPTH_SCALE);
   }
 
-  createControls() {
-    this.input.addPointer(1);
-    this.cursors = this.input.keyboard.createCursorKeys();
-    this.wasd = this.input.keyboard.addKeys({
-      up: Phaser.Input.Keyboard.KeyCodes.W,
-      down: Phaser.Input.Keyboard.KeyCodes.S,
-      left: Phaser.Input.Keyboard.KeyCodes.A,
-      right: Phaser.Input.Keyboard.KeyCodes.D
+  createInputController() {
+    this.inputController = new InputController(this, {
+      onActionPointerDown: () => this.handleActionPointerDown(),
+      onActionPointerEnd: () => this.releaseInteractionHold('pointer'),
+      onActionPointerOut: () => this.releaseInteractionHold('pointer'),
+      onBuildTypePointerDown: (buildType) => this.selectBuildType(buildType),
+      onMenuPointerDown: () => {
+        if (!this.isApplyingSave && !this.exitTransitionLocked) this.showExitConfirmation();
+      }
     });
-    this.interactKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
-    this.useKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F);
-    this.buildToggleKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.B);
-    this.placeBuildKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER);
-    this.cancelBuildKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
-    this.attackKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
-    this.saveKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.K);
-    this.loadKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.L);
-    this.movementVector = new Phaser.Math.Vector2();
+    this.updateInteractionTarget();
   }
 
-  createVirtualJoystick() {
-    this.virtualJoystick = new VirtualJoystick(this);
+  handleActionPointerDown() {
+    if (!this.canHarvest()) return;
+    if (this.interactionSystem.getCurrentTarget() === null) return;
+    if (this.tryOpenCurrentChest()) return;
+    if (!this.startInteractionHold('pointer')) this.inputController.resetActionButton();
   }
 
   createInteractionInterface() {
     this.interactionCleanupDone = false;
-    this.actionPointerId = null;
-    this.actionNativePointerId = null;
     this.holdInputSource = null;
     this.holdStartHotbarIndex = null;
     this.holdToolDisplayName = null;
@@ -918,19 +909,6 @@ class GameScene extends Phaser.Scene {
       fontSize: '12px',
       color: '#ffffff'
     }).setOrigin(0.5).setDepth(INTERFACE_DEPTH - 7).setVisible(false);
-
-    this.actionButton = this.add.circle(0, 0, 36, 0x263642, 0.42)
-      .setStrokeStyle(3, 0xb9cbd6, 0.5)
-      .setScrollFactor(0)
-      .setDepth(INTERFACE_DEPTH)
-      .setInteractive();
-
-    this.actionButtonLabel = this.add.text(0, 0, 'E', {
-      fontFamily: 'Arial, sans-serif',
-      fontSize: '30px',
-      fontStyle: 'bold',
-      color: '#b9cbd6'
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 1);
 
     this.interactionHintText = this.add.text(480, 500, '', {
       fontFamily: 'Arial, sans-serif',
@@ -959,56 +937,8 @@ class GameScene extends Phaser.Scene {
       callback: this.hideInteractionMessage
     });
 
-    this.onActionPointerDown = (pointer) => {
-      if (!this.canHarvest()) return;
-      if (this.actionPointerId !== null || this.interactionSystem.getCurrentTarget() === null) return;
-
-      this.actionPointerId = pointer.id;
-      this.actionNativePointerId = pointer.event ? pointer.event.pointerId : null;
-      this.actionButton.setScale(0.92);
-      this.actionButtonLabel.setScale(0.92);
-      if (this.tryOpenCurrentChest()) return;
-      if (!this.startInteractionHold('pointer')) this.resetActionButton();
-    };
-    this.onActionPointerEnd = (pointer) => {
-      if (pointer.id === this.actionPointerId) this.releaseInteractionHold('pointer');
-    };
-    this.onActionPointerOut = (pointer) => {
-      if (pointer.id === this.actionPointerId) this.releaseInteractionHold('pointer');
-    };
-    this.onActionWindowPointerEnd = (event) => {
-      if (event.pointerId === this.actionNativePointerId) this.releaseInteractionHold('pointer');
-    };
-    this.onActionVisibilityChange = () => {
-      if (document.hidden) this.cancelInteractionHold();
-    };
-    this.onActionBlur = () => this.cancelInteractionHold();
-    this.onActionResize = () => {
-      this.cancelInteractionHold();
-      this.positionActionButton();
-    };
-
-    this.actionButton.on('pointerdown', this.onActionPointerDown);
-    this.actionButton.on('pointerout', this.onActionPointerOut);
-    this.input.on('pointerup', this.onActionPointerEnd);
-    this.input.on('pointerupoutside', this.onActionPointerEnd);
-    this.scale.on('resize', this.onActionResize);
-    window.addEventListener('pointerup', this.onActionWindowPointerEnd);
-    window.addEventListener('pointercancel', this.onActionWindowPointerEnd);
-    window.addEventListener('blur', this.onActionBlur);
-    document.addEventListener('visibilitychange', this.onActionVisibilityChange);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.cleanupInteractionInterface, this);
     this.events.once(Phaser.Scenes.Events.DESTROY, this.cleanupInteractionInterface, this);
-
-    this.positionActionButton();
-    this.updateInteractionTarget();
-  }
-
-  positionActionButton() {
-    const x = this.scale.gameSize.width - 92;
-    const y = this.scale.gameSize.height - 92;
-    this.actionButton.setPosition(x, y);
-    this.actionButtonLabel.setPosition(x, y);
   }
 
   updateInteractionTarget() {
@@ -1033,9 +963,9 @@ class GameScene extends Phaser.Scene {
         : (target && target.type === 'CHEST' ? 'E: открыть сундук' : ''))
       .setVisible(Boolean(target && (target.type === 'CAMPFIRE' || target.type === 'CHEST')));
 
-    this.actionButton.setFillStyle(hasTarget ? 0x3f8f5b : 0x263642, hasTarget ? 0.82 : 0.42);
-    this.actionButton.setStrokeStyle(3, hasTarget ? 0xd9ffe3 : 0xb9cbd6, hasTarget ? 0.95 : 0.5);
-    this.actionButtonLabel.setColor(hasTarget ? '#ffffff' : '#b9cbd6');
+    if (this.inputController) {
+      this.inputController.updateActionButtonAppearance(hasTarget);
+    }
   }
 
   startInteractionHold(source) {
@@ -1100,8 +1030,7 @@ class GameScene extends Phaser.Scene {
     if (completedTarget !== null) {
       this.completeInteraction(completedTarget);
       this.hideHoldProgress();
-      this.actionButton.setScale(1);
-      this.actionButtonLabel.setScale(1);
+      this.inputController.resetActionButton();
       return;
     }
 
@@ -1389,10 +1318,7 @@ class GameScene extends Phaser.Scene {
   }
 
   resetActionButton() {
-    this.actionPointerId = null;
-    this.actionNativePointerId = null;
-    if (this.actionButton) this.actionButton.setScale(1);
-    if (this.actionButtonLabel) this.actionButtonLabel.setScale(1);
+    if (this.inputController) this.inputController.resetActionButton();
   }
 
   cleanupInteractionInterface() {
@@ -1418,15 +1344,6 @@ class GameScene extends Phaser.Scene {
       this.worldObjectsCollider = null;
     }
 
-    this.actionButton.off('pointerdown', this.onActionPointerDown);
-    this.actionButton.off('pointerout', this.onActionPointerOut);
-    this.input.off('pointerup', this.onActionPointerEnd);
-    this.input.off('pointerupoutside', this.onActionPointerEnd);
-    this.scale.off('resize', this.onActionResize);
-    window.removeEventListener('pointerup', this.onActionWindowPointerEnd);
-    window.removeEventListener('pointercancel', this.onActionWindowPointerEnd);
-    window.removeEventListener('blur', this.onActionBlur);
-    document.removeEventListener('visibilitychange', this.onActionVisibilityChange);
     this.events.off(Phaser.Scenes.Events.SHUTDOWN, this.cleanupInteractionInterface, this);
     this.events.off(Phaser.Scenes.Events.DESTROY, this.cleanupInteractionInterface, this);
 
@@ -1435,60 +1352,6 @@ class GameScene extends Phaser.Scene {
       this.interactionMessageTimer = null;
     }
     this.interactionHintText = null;
-  }
-
-  registerLifecycleHandlers() {
-    this.lifecycleHandlersRemoved = false;
-    this.pendingScaleRefresh = null;
-
-    this.resetControls = () => {
-      if (this.input.keyboard) this.input.keyboard.resetKeys();
-      if (this.virtualJoystick) this.virtualJoystick.reset();
-      if (this.player && this.player.body) this.player.setVelocity(0, 0);
-    };
-
-    this.refreshScaleAfterLayout = () => {
-      this.resetControls();
-      if (this.pendingScaleRefresh !== null) {
-        window.cancelAnimationFrame(this.pendingScaleRefresh);
-      }
-      this.pendingScaleRefresh = window.requestAnimationFrame(() => {
-        this.pendingScaleRefresh = null;
-        if (this.sys.isActive()) this.scale.refresh();
-      });
-    };
-
-    this.onVisibilityChange = () => {
-      this.resetControls();
-      if (!document.hidden) this.refreshScaleAfterLayout();
-    };
-
-    this.scale.on('resize', this.resetControls);
-    window.addEventListener('blur', this.resetControls);
-    window.addEventListener('focus', this.refreshScaleAfterLayout);
-    window.addEventListener('orientationchange', this.refreshScaleAfterLayout);
-    document.addEventListener('visibilitychange', this.onVisibilityChange);
-
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.removeLifecycleHandlers, this);
-    this.events.once(Phaser.Scenes.Events.DESTROY, this.removeLifecycleHandlers, this);
-  }
-
-  removeLifecycleHandlers() {
-    if (this.lifecycleHandlersRemoved) return;
-    this.lifecycleHandlersRemoved = true;
-
-    if (this.pendingScaleRefresh !== null) {
-      window.cancelAnimationFrame(this.pendingScaleRefresh);
-      this.pendingScaleRefresh = null;
-    }
-
-    this.scale.off('resize', this.resetControls);
-    window.removeEventListener('blur', this.resetControls);
-    window.removeEventListener('focus', this.refreshScaleAfterLayout);
-    window.removeEventListener('orientationchange', this.refreshScaleAfterLayout);
-    document.removeEventListener('visibilitychange', this.onVisibilityChange);
-    this.events.off(Phaser.Scenes.Events.SHUTDOWN, this.removeLifecycleHandlers, this);
-    this.events.off(Phaser.Scenes.Events.DESTROY, this.removeLifecycleHandlers, this);
   }
 
   createCamera() {
@@ -1543,31 +1406,7 @@ class GameScene extends Phaser.Scene {
   }
 
   createInterface() {
-    const panel = this.add.rectangle(18, 18, 365, 96, 0x111820, 0.82)
-      .setOrigin(0)
-      .setScrollFactor(0)
-      .setDepth(INTERFACE_DEPTH);
-    panel.setStrokeStyle(2, 0xbad5e8, 0.5);
-
-    this.add.text(34, 30, 'Прототип выживалки', {
-      fontFamily: 'Arial, sans-serif',
-      fontSize: '24px',
-      color: '#ffffff'
-    }).setScrollFactor(0).setDepth(INTERFACE_DEPTH);
-
-    this.add.text(34, 61, 'Этап 1: основа', {
-      fontFamily: 'Arial, sans-serif',
-      fontSize: '18px',
-      color: '#bde6ff'
-    }).setScrollFactor(0).setDepth(INTERFACE_DEPTH);
-
-    this.add.text(34, 88, 'Управление: WASD, стрелки или джойстик', {
-      fontFamily: 'Arial, sans-serif',
-      fontSize: '15px',
-      color: '#e7edf2'
-    }).setScrollFactor(0).setDepth(INTERFACE_DEPTH);
-
-    this.inventoryHudText = this.add.text(34, 122, '', {
+    this.inventoryHudText = this.add.text(34, 34, '', {
       fontFamily: 'Arial, sans-serif',
       fontSize: '16px',
       color: '#fff4b0',
@@ -1671,22 +1510,9 @@ class GameScene extends Phaser.Scene {
 
   createSurvivalInterface() {
     this.survivalCleanupDone = false;
-    this.usePointerId = null;
-    this.useNativePointerId = null;
     this.statusHUD = new StatusHUD(this);
     this.statusHUD.update(this.playerStatsModel.getHealth(), this.playerStatsModel.getHunger());
 
-    this.useButton = this.add.circle(0, 0, 30, 0x36516a, 0.88)
-      .setStrokeStyle(3, 0xc8e8ff, 0.85)
-      .setScrollFactor(0)
-      .setDepth(INTERFACE_DEPTH + 10)
-      .setInteractive();
-    this.useButtonLabel = this.add.text(0, 0, 'USE', {
-      fontFamily: 'Arial, sans-serif',
-      fontSize: '14px',
-      fontStyle: 'bold',
-      color: '#ffffff'
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 11);
     this.deathText = this.add.text(480, 270, 'Вы погибли', {
       fontFamily: 'Arial, sans-serif',
       fontSize: '44px',
@@ -1696,41 +1522,8 @@ class GameScene extends Phaser.Scene {
       padding: { x: 24, y: 14 }
     }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 50).setVisible(false);
 
-    this.onUsePointerDown = (pointer, localX, localY, event) => {
-      if (event && event.stopPropagation) event.stopPropagation();
-      if (this.usePointerId !== null || !this.canUseFood()) return;
-      this.usePointerId = pointer.id;
-      this.useNativePointerId = pointer.event ? pointer.event.pointerId : null;
-      this.useButton.setScale(0.92);
-      this.useButtonLabel.setScale(0.92);
-      this.tryUseActiveItem();
-    };
-    this.onUsePointerEnd = (pointer) => {
-      if (pointer.id === this.usePointerId) this.resetUseButton();
-    };
-    this.onUseWindowPointerEnd = (event) => {
-      if (event.pointerId === this.useNativePointerId) this.resetUseButton();
-    };
-    this.onUseBlur = () => this.resetUseButton();
-    this.onUseVisibilityChange = () => {
-      if (document.hidden) this.resetUseButton();
-    };
-    this.onUseResize = () => {
-      this.resetUseButton();
-      this.positionUseButton();
-    };
-
-    this.useButton.on('pointerdown', this.onUsePointerDown);
-    this.input.on('pointerup', this.onUsePointerEnd);
-    this.input.on('pointerupoutside', this.onUsePointerEnd);
-    this.scale.on('resize', this.onUseResize);
-    window.addEventListener('pointerup', this.onUseWindowPointerEnd);
-    window.addEventListener('pointercancel', this.onUseWindowPointerEnd);
-    window.addEventListener('blur', this.onUseBlur);
-    document.addEventListener('visibilitychange', this.onUseVisibilityChange);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.cleanupSurvivalInterface, this);
     this.events.once(Phaser.Scenes.Events.DESTROY, this.cleanupSurvivalInterface, this);
-    this.positionUseButton();
   }
 
   initializeSelectedSlot() {
@@ -1775,10 +1568,14 @@ class GameScene extends Phaser.Scene {
     if (this.craftingUI.isOpen) this.craftingUI.closePanel();
     this.closeChestPanel();
     this.inventoryUI.resetBackpackPointer(); this.craftingUI.resetPointer();
-    if (this.virtualJoystick) this.virtualJoystick.reset();
-    if (this.input.keyboard) this.input.keyboard.resetKeys();
-    this.resetBuildTogglePointer(); this.resetPlacePointer();
-    this.player.setVelocity(0, 0); this.resetAttackButton(); this.resetUseButton();
+    if (this.inputController) {
+      this.inputController.resetHardwareState();
+      this.inputController.resetBuildTogglePointer();
+      this.inputController.resetPlacePointer();
+      this.inputController.resetAttackButton();
+      this.inputController.resetUseButton();
+    }
+    this.player.setVelocity(0, 0);
     if (this.projectileSystem) this.projectileSystem.clearProjectiles();
   }
 
@@ -1872,41 +1669,10 @@ class GameScene extends Phaser.Scene {
     finally { this.isApplyingSave = false; }
   }
 
-  createSaveInterface() {
-    this.savePointers = { save: null, load: null }; this.saveNativePointers = { save: null, load: null };
-    const make = (label, x, y) => ({ button: this.add.circle(x, y, 25, 0x35536b, 0.9).setStrokeStyle(2, 0xcbe9ff, .8).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 12).setInteractive(),
-      text: this.add.text(x, y, label, { fontFamily: 'Arial, sans-serif', fontSize: '10px', fontStyle: 'bold', color: '#fff' }).setOrigin(.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 13) });
-    this.saveControl = make('SAVE', 450, 42); this.loadControl = make('LOAD', 520, 42);
-    const bind = (name, control, action) => { control.handler = (pointer, lx, ly, event) => { if (event?.stopPropagation) event.stopPropagation(); if (this.savePointers[name] !== null || this.isApplyingSave) return; this.savePointers[name] = pointer.id; this.saveNativePointers[name] = pointer.event?.pointerId ?? null; action.call(this); }; control.button.on('pointerdown', control.handler); };
-    bind('save', this.saveControl, this.saveGame); bind('load', this.loadControl, this.loadGame);
-    this.onSavePointerUp = (pointer) => { for (const n of ['save','load']) if (this.savePointers[n] === pointer.id) this.savePointers[n] = this.saveNativePointers[n] = null; };
-    this.onSaveWindowUp = (event) => { for (const n of ['save','load']) if (this.saveNativePointers[n] === event.pointerId) this.savePointers[n] = this.saveNativePointers[n] = null; };
-    this.onSaveBlur = () => { this.savePointers.save = this.savePointers.load = this.saveNativePointers.save = this.saveNativePointers.load = null; };
-    this.onSaveVisibility = () => { if (document.hidden) this.onSaveBlur(); };
-    this.input.on('pointerup', this.onSavePointerUp); this.input.on('pointerupoutside', this.onSavePointerUp); window.addEventListener('pointerup', this.onSaveWindowUp); window.addEventListener('pointercancel', this.onSaveWindowUp); window.addEventListener('blur', this.onSaveBlur); document.addEventListener('visibilitychange', this.onSaveVisibility);
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.cleanupSaveInterface, this); this.events.once(Phaser.Scenes.Events.DESTROY, this.cleanupSaveInterface, this);
-  }
-
-  cleanupSaveInterface() {
-    if (!this.saveControl) return; this.isApplyingSave = false;
-    this.saveControl.button.off('pointerdown', this.saveControl.handler); this.loadControl.button.off('pointerdown', this.loadControl.handler);
-    this.input.off('pointerup', this.onSavePointerUp); this.input.off('pointerupoutside', this.onSavePointerUp); window.removeEventListener('pointerup', this.onSaveWindowUp); window.removeEventListener('pointercancel', this.onSaveWindowUp); window.removeEventListener('blur', this.onSaveBlur); document.removeEventListener('visibilitychange', this.onSaveVisibility);
-    this.events.off(Phaser.Scenes.Events.SHUTDOWN, this.cleanupSaveInterface, this); this.events.off(Phaser.Scenes.Events.DESTROY, this.cleanupSaveInterface, this);
-    [this.saveControl.button,this.saveControl.text,this.loadControl.button,this.loadControl.text].forEach((o)=>{if(o.active)o.destroy();}); this.saveControl = this.loadControl = null;
-  }
-
   createMenuExitInterface() {
     this.exitConfirmOpen = false;
     this.exitTransitionLocked = false;
     this.menuExitCleanupDone = false;
-    this.menuControl = {
-      button: this.add.rectangle(590, 42, 82, 40, 0x45556a, 0.95)
-        .setStrokeStyle(2, 0xcbe9ff, 0.8).setScrollFactor(0)
-        .setDepth(INTERFACE_DEPTH + 12).setInteractive({ useHandCursor: true }),
-      text: this.add.text(590, 42, 'МЕНЮ', {
-        fontFamily: 'Arial, sans-serif', fontSize: '13px', fontStyle: 'bold', color: '#ffffff'
-      }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 13)
-    };
     const modalDepth = INTERFACE_DEPTH + 100;
     this.exitModalOverlay = this.add.rectangle(480, 270, 960, 540, 0x000000, 0.72)
       .setScrollFactor(0).setDepth(modalDepth).setVisible(false);
@@ -1926,10 +1692,6 @@ class GameScene extends Phaser.Scene {
       fontFamily: 'Arial, sans-serif', fontSize: '15px', fontStyle: 'bold', color: '#ffffff'
     }).setOrigin(0.5).setScrollFactor(0).setDepth(modalDepth + 3).setVisible(false);
 
-    this.onMenuControlDown = (pointer, localX, localY, event) => {
-      if (event && event.stopPropagation) event.stopPropagation();
-      if (!this.isApplyingSave && !this.exitTransitionLocked) this.showExitConfirmation();
-    };
     this.onExitConfirmDown = (pointer, localX, localY, event) => {
       if (event && event.stopPropagation) event.stopPropagation();
       this.saveAndExitToMenu();
@@ -1938,7 +1700,6 @@ class GameScene extends Phaser.Scene {
       if (event && event.stopPropagation) event.stopPropagation();
       this.hideExitConfirmation();
     };
-    this.menuControl.button.on('pointerdown', this.onMenuControlDown);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.cleanupMenuExitInterface, this);
     this.events.once(Phaser.Scenes.Events.DESTROY, this.cleanupMenuExitInterface, this);
   }
@@ -1947,27 +1708,42 @@ class GameScene extends Phaser.Scene {
     if (this.exitConfirmOpen || this.exitTransitionLocked) return;
     this.exitConfirmOpen = true;
     this.cancelInteractionHold();
-    if (this.virtualJoystick) this.virtualJoystick.reset();
+    if (this.inputController) this.inputController.setGameControlsBlocked(true);
     if (this.player && this.player.body) this.player.setVelocity(0, 0);
-    if (this.input.keyboard) this.input.keyboard.resetKeys();
-    this.exitModalOverlay.setInteractive();
     this.exitConfirmButton.setInteractive({ useHandCursor: true });
     this.exitCancelButton.setInteractive({ useHandCursor: true });
+    this.exitConfirmText.setInteractive({ useHandCursor: true });
+    this.exitCancelText.setInteractive({ useHandCursor: true });
     this.exitConfirmButton.on('pointerdown', this.onExitConfirmDown);
     this.exitCancelButton.on('pointerdown', this.onExitCancelDown);
+    this.exitConfirmText.on('pointerdown', this.onExitConfirmDown);
+    this.exitCancelText.on('pointerdown', this.onExitCancelDown);
     [this.exitModalOverlay, this.exitModalPanel, this.exitModalText, this.exitConfirmButton,
       this.exitConfirmText, this.exitCancelButton, this.exitCancelText]
       .forEach((element) => element.setVisible(true));
+    [
+      this.exitModalOverlay,
+      this.exitModalPanel,
+      this.exitModalText,
+      this.exitConfirmButton,
+      this.exitConfirmText,
+      this.exitCancelButton,
+      this.exitCancelText
+    ].forEach((element) => this.children.bringToTop(element));
   }
 
   hideExitConfirmation() {
     if (!this.exitConfirmOpen) return;
     this.exitConfirmOpen = false;
-    this.exitModalOverlay.disableInteractive();
     this.exitConfirmButton.disableInteractive();
     this.exitCancelButton.disableInteractive();
+    this.exitConfirmText.disableInteractive();
+    this.exitCancelText.disableInteractive();
     this.exitConfirmButton.off('pointerdown', this.onExitConfirmDown);
     this.exitCancelButton.off('pointerdown', this.onExitCancelDown);
+    this.exitConfirmText.off('pointerdown', this.onExitConfirmDown);
+    this.exitCancelText.off('pointerdown', this.onExitCancelDown);
+    if (this.inputController) this.inputController.setGameControlsBlocked(false);
     [this.exitModalOverlay, this.exitModalPanel, this.exitModalText, this.exitConfirmButton,
       this.exitConfirmText, this.exitCancelButton, this.exitCancelText]
       .forEach((element) => element.setVisible(false));
@@ -1981,14 +1757,15 @@ class GameScene extends Phaser.Scene {
       }
       return false;
     }
+    this.exitTransitionLocked = true;
     this.prepareForSaveOperation();
     const result = this.saveSystem.save(this.createSaveState());
     if (!result.success) {
+      this.exitTransitionLocked = false;
       this.hideExitConfirmation();
       this.showInteractionMessage('Ошибка локального хранилища');
       return false;
     }
-    this.exitTransitionLocked = true;
     this.scene.start('MenuScene');
     return true;
   }
@@ -1997,73 +1774,29 @@ class GameScene extends Phaser.Scene {
     if (this.menuExitCleanupDone) return;
     this.menuExitCleanupDone = true;
     this.exitConfirmOpen = false;
+    if (this.inputController) this.inputController.setGameControlsBlocked(false);
     if (this.exitConfirmButton) this.exitConfirmButton.off('pointerdown', this.onExitConfirmDown);
     if (this.exitCancelButton) this.exitCancelButton.off('pointerdown', this.onExitCancelDown);
-    if (this.menuControl && this.menuControl.button) {
-      this.menuControl.button.off('pointerdown', this.onMenuControlDown);
-    }
+    if (this.exitConfirmText) this.exitConfirmText.off('pointerdown', this.onExitConfirmDown);
+    if (this.exitCancelText) this.exitCancelText.off('pointerdown', this.onExitCancelDown);
     this.events.off(Phaser.Scenes.Events.SHUTDOWN, this.cleanupMenuExitInterface, this);
     this.events.off(Phaser.Scenes.Events.DESTROY, this.cleanupMenuExitInterface, this);
-    const elements = this.menuControl ? [this.menuControl.button, this.menuControl.text] : [];
+    const elements = [];
     elements.push(this.exitModalOverlay, this.exitModalPanel, this.exitModalText,
       this.exitConfirmButton, this.exitConfirmText, this.exitCancelButton, this.exitCancelText);
     elements.forEach((element) => { if (element && element.active) element.destroy(); });
-    this.menuControl = null;
   }
 
   createCombatInterface() {
     this.combatCleanupDone = false;
     this.lastPlayerAttackTime = -Infinity;
     this.resetPlayerCombatState();
-    this.attackPointerId = null;
-    this.attackNativePointerId = null;
-    this.attackButton = this.add.circle(0, 0, 30, 0x8b3f47, 0.9)
-      .setStrokeStyle(3, 0xffc4c8, 0.9).setScrollFactor(0)
-      .setDepth(INTERFACE_DEPTH + 12).setInteractive();
-    this.attackButtonLabel = this.add.text(0, 0, 'ATTACK', {
-      fontFamily: 'Arial, sans-serif', fontSize: '9px', fontStyle: 'bold', color: '#ffffff'
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 13);
-    this.attackButton.setPosition(this.scale.gameSize.width - 328, this.scale.gameSize.height - 92);
-    this.attackButtonLabel.setPosition(this.scale.gameSize.width - 328, this.scale.gameSize.height - 92);
-    this.onAttackPointerDown = (pointer, localX, localY, event) => {
-      if (event && event.stopPropagation) event.stopPropagation();
-      if (this.attackPointerId !== null || !this.canAttack()) return;
-      this.attackPointerId = pointer.id;
-      this.attackNativePointerId = pointer.event ? pointer.event.pointerId : null;
-      this.attackButton.setScale(0.92);
-      this.attackButtonLabel.setScale(0.92);
-      this.tryPlayerAttack();
-    };
-    this.onAttackPointerEnd = (pointer) => {
-      if (pointer.id === this.attackPointerId) this.resetAttackButton();
-    };
-    this.onAttackWindowEnd = (event) => {
-      if (event.pointerId === this.attackNativePointerId) this.resetAttackButton();
-    };
-    this.onAttackBlur = () => this.resetAttackButton();
-    this.onAttackVisibility = () => { if (document.hidden) this.resetAttackButton(); };
-    this.onAttackResize = () => {
-      this.resetAttackButton();
-      this.attackButton.setPosition(this.scale.gameSize.width - 328, this.scale.gameSize.height - 92);
-      this.attackButtonLabel.setPosition(this.scale.gameSize.width - 328, this.scale.gameSize.height - 92);
-    };
-    this.attackButton.on('pointerdown', this.onAttackPointerDown);
-    this.input.on('pointerup', this.onAttackPointerEnd);
-    this.input.on('pointerupoutside', this.onAttackPointerEnd);
-    this.scale.on('resize', this.onAttackResize);
-    window.addEventListener('pointerup', this.onAttackWindowEnd);
-    window.addEventListener('pointercancel', this.onAttackWindowEnd);
-    window.addEventListener('blur', this.onAttackBlur);
-    document.addEventListener('visibilitychange', this.onAttackVisibility);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.cleanupCombatInterface, this);
     this.events.once(Phaser.Scenes.Events.DESTROY, this.cleanupCombatInterface, this);
   }
 
   resetAttackButton() {
-    this.attackPointerId = null;
-    this.attackNativePointerId = null;
-    if (this.attackButton && this.attackButton.active) this.attackButton.setScale(1);
-    if (this.attackButtonLabel && this.attackButtonLabel.active) this.attackButtonLabel.setScale(1);
+    if (this.inputController) this.inputController.resetAttackButton();
   }
 
   getCombatTime() {
@@ -2237,14 +1970,6 @@ class GameScene extends Phaser.Scene {
     this.combatCleanupDone = true;
     this.resetAttackButton();
     this.resetPlayerCombatState();
-    this.attackButton.off('pointerdown', this.onAttackPointerDown);
-    this.input.off('pointerup', this.onAttackPointerEnd);
-    this.input.off('pointerupoutside', this.onAttackPointerEnd);
-    this.scale.off('resize', this.onAttackResize);
-    window.removeEventListener('pointerup', this.onAttackWindowEnd);
-    window.removeEventListener('pointercancel', this.onAttackWindowEnd);
-    window.removeEventListener('blur', this.onAttackBlur);
-    document.removeEventListener('visibilitychange', this.onAttackVisibility);
     this.events.off(Phaser.Scenes.Events.SHUTDOWN, this.cleanupCombatInterface, this);
     this.events.off(Phaser.Scenes.Events.DESTROY, this.cleanupCombatInterface, this);
     if (this.projectileSystem) this.projectileSystem.destroy();
@@ -2255,125 +1980,13 @@ class GameScene extends Phaser.Scene {
     this.creatureMapCollider = null;
     this.creatureObstacleCollider = null;
     this.creatureSystem = null;
-    if (this.attackButton && this.attackButton.active) this.attackButton.destroy();
-    if (this.attackButtonLabel && this.attackButtonLabel.active) this.attackButtonLabel.destroy();
-    this.attackButton = null;
-    this.attackButtonLabel = null;
   }
 
   createBuildingInterface() {
     this.buildingCleanupDone = false;
-    this.buildTogglePointerId = null;
-    this.buildToggleNativePointerId = null;
-    this.placePointerId = null;
-    this.placeNativePointerId = null;
     this.selectedBuildType = Object.keys(BuildCatalog)[0];
-    this.buildTypeControls = [];
-
-    this.buildToggleButton = this.add.circle(0, 0, 28, 0x806039, 0.9)
-      .setStrokeStyle(2, 0xf1d2a5, 0.85).setScrollFactor(0)
-      .setDepth(INTERFACE_DEPTH + 12).setInteractive();
-    this.buildToggleLabel = this.add.text(0, 0, 'BUILD', {
-      fontFamily: 'Arial, sans-serif', fontSize: '10px', fontStyle: 'bold', color: '#ffffff'
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 13);
-    this.placeButton = this.add.circle(0, 0, 30, 0x3f8f5b, 0.9)
-      .setStrokeStyle(3, 0xd9ffe3, 0.9).setScrollFactor(0)
-      .setDepth(INTERFACE_DEPTH + 12).setInteractive().setVisible(false);
-    this.placeButton.disableInteractive();
-    this.placeButtonLabel = this.add.text(0, 0, 'PLACE', {
-      fontFamily: 'Arial, sans-serif', fontSize: '10px', fontStyle: 'bold', color: '#ffffff'
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 13).setVisible(false);
-
-    Object.keys(BuildCatalog).forEach((buildType) => {
-      const definition = BuildCatalog[buildType];
-      const costText = definition.cost
-        .map((cost) => `${cost.itemType} ×${cost.quantity}`)
-        .join(' + ');
-      const button = this.add.rectangle(0, 0, 132, 46, 0x3b4650, 0.94)
-        .setStrokeStyle(2, 0xa9bac7, 0.8)
-        .setScrollFactor(0)
-        .setDepth(INTERFACE_DEPTH + 12)
-        .setVisible(false)
-        .setInteractive();
-      button.disableInteractive();
-      const label = this.add.text(0, 0, `${definition.displayName}\n${costText}`, {
-        fontFamily: 'Arial, sans-serif', fontSize: '11px', fontStyle: 'bold', color: '#ffffff',
-        align: 'center', lineSpacing: 2
-      }).setOrigin(0.5).setScrollFactor(0).setDepth(INTERFACE_DEPTH + 13).setVisible(false);
-      const onPointerDown = (pointer, localX, localY, event) => {
-        if (event && event.stopPropagation) event.stopPropagation();
-        if (!this.buildingSystem.isActive()) return;
-        this.selectBuildType(buildType);
-      };
-      button.on('pointerdown', onPointerDown);
-      this.buildTypeControls.push({ buildType, button, label, onPointerDown });
-    });
-
-    this.onBuildTogglePointerDown = (pointer, localX, localY, event) => {
-      if (event && event.stopPropagation) event.stopPropagation();
-      if (this.buildTogglePointerId !== null || !this.canBuild()) return;
-      this.buildTogglePointerId = pointer.id;
-      this.buildToggleNativePointerId = pointer.event ? pointer.event.pointerId : null;
-      this.buildToggleButton.setScale(0.92);
-      this.buildToggleLabel.setScale(0.92);
-      this.toggleBuildMode();
-    };
-    this.onPlacePointerDown = (pointer, localX, localY, event) => {
-      if (event && event.stopPropagation) event.stopPropagation();
-      if (this.placePointerId !== null || !this.canBuild() || !this.buildingSystem.isActive()) return;
-      this.placePointerId = pointer.id;
-      this.placeNativePointerId = pointer.event ? pointer.event.pointerId : null;
-      this.placeButton.setScale(0.92);
-      this.placeButtonLabel.setScale(0.92);
-      this.tryPlaceBuilding();
-    };
-    this.onBuildingPointerEnd = (pointer) => {
-      if (pointer.id === this.buildTogglePointerId) this.resetBuildTogglePointer();
-      if (pointer.id === this.placePointerId) this.resetPlacePointer();
-    };
-    this.onBuildingWindowPointerEnd = (event) => {
-      if (event.pointerId === this.buildToggleNativePointerId) this.resetBuildTogglePointer();
-      if (event.pointerId === this.placeNativePointerId) this.resetPlacePointer();
-    };
-    this.onBuildingBlur = () => {
-      this.resetBuildTogglePointer();
-      this.resetPlacePointer();
-    };
-    this.onBuildingVisibilityChange = () => {
-      if (document.hidden) this.onBuildingBlur();
-    };
-    this.onBuildingResize = () => {
-      this.onBuildingBlur();
-      this.positionBuildingButtons();
-    };
-
-    this.buildToggleButton.on('pointerdown', this.onBuildTogglePointerDown);
-    this.placeButton.on('pointerdown', this.onPlacePointerDown);
-    this.input.on('pointerup', this.onBuildingPointerEnd);
-    this.input.on('pointerupoutside', this.onBuildingPointerEnd);
-    this.scale.on('resize', this.onBuildingResize);
-    window.addEventListener('pointerup', this.onBuildingWindowPointerEnd);
-    window.addEventListener('pointercancel', this.onBuildingWindowPointerEnd);
-    window.addEventListener('blur', this.onBuildingBlur);
-    document.addEventListener('visibilitychange', this.onBuildingVisibilityChange);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.cleanupBuildingInterface, this);
     this.events.once(Phaser.Scenes.Events.DESTROY, this.cleanupBuildingInterface, this);
-    this.positionBuildingButtons();
-  }
-
-  positionBuildingButtons() {
-    const width = this.scale.gameSize.width;
-    const height = this.scale.gameSize.height;
-    this.buildToggleButton.setPosition(width - 52, 192);
-    this.buildToggleLabel.setPosition(width - 52, 192);
-    this.placeButton.setPosition(width - 260, height - 92);
-    this.placeButtonLabel.setPosition(width - 260, height - 92);
-    const buildControlStartX = width / 2 - ((this.buildTypeControls.length - 1) * 145) / 2;
-    this.buildTypeControls.forEach((control, index) => {
-      const x = buildControlStartX + index * 145;
-      control.button.setPosition(x, 192);
-      control.label.setPosition(x, 192);
-    });
   }
 
   selectBuildType(buildType) {
@@ -2386,7 +1999,8 @@ class GameScene extends Phaser.Scene {
   }
 
   setBuildTypeControlsVisible(visible) {
-    this.buildTypeControls.forEach((control) => {
+    if (!this.inputController) return;
+    this.inputController.buildTypeControls.forEach((control) => {
       control.button.setVisible(visible);
       control.label.setVisible(visible);
       if (visible) control.button.setInteractive();
@@ -2396,7 +2010,8 @@ class GameScene extends Phaser.Scene {
   }
 
   updateBuildTypeControls() {
-    this.buildTypeControls.forEach((control) => {
+    if (!this.inputController) return;
+    this.inputController.buildTypeControls.forEach((control) => {
       const selected = control.buildType === this.selectedBuildType;
       control.button
         .setFillStyle(selected ? 0x806039 : 0x3b4650, 0.94)
@@ -2405,17 +2020,11 @@ class GameScene extends Phaser.Scene {
   }
 
   resetBuildTogglePointer() {
-    this.buildTogglePointerId = null;
-    this.buildToggleNativePointerId = null;
-    if (this.buildToggleButton && this.buildToggleButton.active) this.buildToggleButton.setScale(1);
-    if (this.buildToggleLabel && this.buildToggleLabel.active) this.buildToggleLabel.setScale(1);
+    if (this.inputController) this.inputController.resetBuildTogglePointer();
   }
 
   resetPlacePointer() {
-    this.placePointerId = null;
-    this.placeNativePointerId = null;
-    if (this.placeButton && this.placeButton.active) this.placeButton.setScale(1);
-    if (this.placeButtonLabel && this.placeButtonLabel.active) this.placeButtonLabel.setScale(1);
+    if (this.inputController) this.inputController.resetPlacePointer();
   }
 
   toggleBuildMode() {
@@ -2435,9 +2044,9 @@ class GameScene extends Phaser.Scene {
     this.interactionHintText.setVisible(false);
     this.buildingSystem.enterMode(this.selectedBuildType);
     this.setBuildTypeControlsVisible(true);
-    this.placeButton.setVisible(true);
-    this.placeButton.setInteractive();
-    this.placeButtonLabel.setVisible(true);
+    this.inputController.placeButton.setVisible(true);
+    this.inputController.placeButton.setInteractive();
+    this.inputController.placeButtonLabel.setVisible(true);
     this.updateBuildingPreview();
     return true;
   }
@@ -2446,9 +2055,9 @@ class GameScene extends Phaser.Scene {
     if (!this.buildingSystem || !this.buildingSystem.isActive()) return;
     this.buildingSystem.exitMode();
     this.currentBuildTarget = null;
-    this.placeButton.setVisible(false);
-    this.placeButton.disableInteractive();
-    this.placeButtonLabel.setVisible(false);
+    this.inputController.placeButton.setVisible(false);
+    this.inputController.placeButton.disableInteractive();
+    this.inputController.placeButtonLabel.setVisible(false);
     this.setBuildTypeControlsVisible(false);
     this.resetPlacePointer();
     if (!this.buildingCleanupDone && this.canHarvest()) this.updateInteractionTarget();
@@ -2557,51 +2166,16 @@ class GameScene extends Phaser.Scene {
     this.exitBuildMode();
     this.resetBuildTogglePointer();
     this.resetPlacePointer();
-    this.buildToggleButton.off('pointerdown', this.onBuildTogglePointerDown);
-    this.placeButton.off('pointerdown', this.onPlacePointerDown);
-    this.buildTypeControls.forEach((control) => {
-      control.button.off('pointerdown', control.onPointerDown);
-    });
-    this.input.off('pointerup', this.onBuildingPointerEnd);
-    this.input.off('pointerupoutside', this.onBuildingPointerEnd);
-    this.scale.off('resize', this.onBuildingResize);
-    window.removeEventListener('pointerup', this.onBuildingWindowPointerEnd);
-    window.removeEventListener('pointercancel', this.onBuildingWindowPointerEnd);
-    window.removeEventListener('blur', this.onBuildingBlur);
-    document.removeEventListener('visibilitychange', this.onBuildingVisibilityChange);
     this.events.off(Phaser.Scenes.Events.SHUTDOWN, this.cleanupBuildingInterface, this);
     this.events.off(Phaser.Scenes.Events.DESTROY, this.cleanupBuildingInterface, this);
     if (this.buildingSystem) {
       this.buildingSystem.clear();
       this.buildingSystem = null;
     }
-    [this.buildToggleButton, this.buildToggleLabel, this.placeButton, this.placeButtonLabel]
-      .forEach((element) => {
-        if (element && element.active) element.destroy();
-      });
-    this.buildTypeControls.forEach((control) => {
-      if (control.button && control.button.active) control.button.destroy();
-      if (control.label && control.label.active) control.label.destroy();
-    });
-    this.buildTypeControls = [];
-    this.buildToggleButton = null;
-    this.buildToggleLabel = null;
-    this.placeButton = null;
-    this.placeButtonLabel = null;
-  }
-
-  positionUseButton() {
-    const x = this.scale.gameSize.width - 176;
-    const y = this.scale.gameSize.height - 92;
-    this.useButton.setPosition(x, y);
-    this.useButtonLabel.setPosition(x, y);
   }
 
   resetUseButton() {
-    this.usePointerId = null;
-    this.useNativePointerId = null;
-    if (this.useButton && this.useButton.active) this.useButton.setScale(1);
-    if (this.useButtonLabel && this.useButtonLabel.active) this.useButtonLabel.setScale(1);
+    if (this.inputController) this.inputController.resetUseButton();
   }
 
   tryUseActiveItem() {
@@ -2662,7 +2236,7 @@ class GameScene extends Phaser.Scene {
     if (this.projectileSystem) this.projectileSystem.clearProjectiles();
     this.resetPlayerCombatState();
     this.cancelInteractionHold();
-    if (this.virtualJoystick) this.virtualJoystick.reset();
+    if (this.inputController) this.inputController.resetHardwareState();
     this.resetActionButton();
     this.resetUseButton();
     this.exitBuildMode();
@@ -2678,35 +2252,19 @@ class GameScene extends Phaser.Scene {
   updateDeathPresentation() {
     const isDead = this.isPlayerDead();
     if (this.deathText) this.deathText.setVisible(isDead);
-    if (this.useButton) {
-      this.useButton.setFillStyle(isDead ? 0x303840 : 0x36516a, isDead ? 0.55 : 0.88);
-      this.useButton.setStrokeStyle(3, isDead ? 0x77838c : 0xc8e8ff, isDead ? 0.5 : 0.85);
-    }
+    if (this.inputController) this.inputController.setUseButtonDisabled(isDead);
   }
 
   cleanupSurvivalInterface() {
     if (this.survivalCleanupDone) return;
     this.survivalCleanupDone = true;
-    this.resetUseButton();
-    this.useButton.off('pointerdown', this.onUsePointerDown);
-    this.input.off('pointerup', this.onUsePointerEnd);
-    this.input.off('pointerupoutside', this.onUsePointerEnd);
-    this.scale.off('resize', this.onUseResize);
-    window.removeEventListener('pointerup', this.onUseWindowPointerEnd);
-    window.removeEventListener('pointercancel', this.onUseWindowPointerEnd);
-    window.removeEventListener('blur', this.onUseBlur);
-    document.removeEventListener('visibilitychange', this.onUseVisibilityChange);
     this.events.off(Phaser.Scenes.Events.SHUTDOWN, this.cleanupSurvivalInterface, this);
     this.events.off(Phaser.Scenes.Events.DESTROY, this.cleanupSurvivalInterface, this);
     if (this.statusHUD) {
       this.statusHUD.destroy();
       this.statusHUD = null;
     }
-    if (this.useButton && this.useButton.active) this.useButton.destroy();
-    if (this.useButtonLabel && this.useButtonLabel.active) this.useButtonLabel.destroy();
     if (this.deathText && this.deathText.active) this.deathText.destroy();
-    this.useButton = null;
-    this.useButtonLabel = null;
     this.deathText = null;
     this.playerStatsModel = null;
   }
@@ -2753,12 +2311,11 @@ class GameScene extends Phaser.Scene {
 
   handleBlockingPanelChanged(isOpen) {
     this.cancelInteractionHold();
-    if (this.virtualJoystick) this.virtualJoystick.reset();
-    this.resetActionButton();
-    if (this.input.keyboard) this.input.keyboard.resetKeys();
+    if (this.inputController) {
+      this.inputController.resetHardwareState();
+      this.inputController.resetTransientState();
+    }
     if (this.player && this.player.body) this.player.setVelocity(0, 0);
-    this.resetUseButton();
-    this.resetAttackButton();
     if (isOpen) {
       this.targetMarker.setVisible(false);
       if (this.interactionHintText) this.interactionHintText.setVisible(false);
@@ -2805,10 +2362,14 @@ class GameScene extends Phaser.Scene {
   update(time, delta) {
     if (this.survivalCleanupDone || !this.playerStatsModel) return;
     if (this.isApplyingSave) return;
-    if (this.exitConfirmOpen && Phaser.Input.Keyboard.JustDown(this.cancelBuildKey)) {
+
+    const input = this.inputController;
+
+    if (this.exitConfirmOpen && input.consumeCancelBuildPressed()) {
       this.hideExitConfirmation();
       return;
     }
+
     this.dayNightSystem.update(Number.isFinite(delta) ? Math.max(delta, 0) : 0);
     this.applyDayNightVisuals(false);
     if (this.projectileSystem) this.projectileSystem.update();
@@ -2829,8 +2390,10 @@ class GameScene extends Phaser.Scene {
       this.playerStatsModel.getHunger()
     );
     if (this.playerStatsModel.isDead()) this.handlePlayerDeath();
-    if (Phaser.Input.Keyboard.JustDown(this.saveKey)) this.saveGame();
-    if (Phaser.Input.Keyboard.JustDown(this.loadKey)) this.loadGame();
+
+    if (input.consumeSavePressed()) this.saveGame();
+    if (input.consumeLoadPressed()) this.loadGame();
+
     if (this.isDeathHandled) {
       this.player.setVelocity(0, 0);
       return;
@@ -2842,10 +2405,10 @@ class GameScene extends Phaser.Scene {
 
     this.updatePlayerHitFlash();
 
-    if (Phaser.Input.Keyboard.JustDown(this.buildToggleKey) && this.canBuild()) {
+    if (input.consumeBuildTogglePressed() && this.canBuild()) {
       this.toggleBuildMode();
     }
-    if (this.buildingSystem.isActive() && Phaser.Input.Keyboard.JustDown(this.cancelBuildKey)) {
+    if (this.buildingSystem.isActive() && input.consumeCancelBuildPressed()) {
       this.exitBuildMode();
     }
 
@@ -2855,19 +2418,7 @@ class GameScene extends Phaser.Scene {
       return;
     }
 
-    let horizontal = 0;
-    let vertical = 0;
-
-    if (this.cursors.left.isDown || this.wasd.left.isDown) horizontal -= 1;
-    if (this.cursors.right.isDown || this.wasd.right.isDown) horizontal += 1;
-    if (this.cursors.up.isDown || this.wasd.up.isDown) vertical -= 1;
-    if (this.cursors.down.isDown || this.wasd.down.isDown) vertical += 1;
-
-    const joystickDirection = this.virtualJoystick.getDirection();
-    const movement = this.movementVector.set(
-      horizontal + joystickDirection.x,
-      vertical + joystickDirection.y
-    );
+    const movement = input.getMovementVector();
 
     if (movement.lengthSq() > 0) {
       if (Math.abs(movement.x) >= Math.abs(movement.y)) {
@@ -2877,7 +2428,6 @@ class GameScene extends Phaser.Scene {
       }
     }
 
-    if (movement.lengthSq() > 1) movement.normalize();
     movement.scale(PLAYER_SPEED);
 
     this.player.setVelocity(movement.x, movement.y);
@@ -2885,22 +2435,22 @@ class GameScene extends Phaser.Scene {
     this.collectNearbyGroundItems();
     if (this.buildingSystem.isActive()) {
       this.updateBuildingPreview();
-      if (Phaser.Input.Keyboard.JustDown(this.placeBuildKey)) this.tryPlaceBuilding();
+      if (input.consumePlaceBuildPressed()) this.tryPlaceBuilding();
       return;
     }
     this.updateInteractionTarget();
 
-    if (Phaser.Input.Keyboard.JustDown(this.attackKey)) this.tryPlayerAttack();
+    if (input.consumeAttackPressed()) this.tryPlayerAttack();
 
-    if (Phaser.Input.Keyboard.JustDown(this.useKey)) {
+    if (input.consumeUsePressed()) {
       this.tryUseActiveItem();
     }
 
-    if (Phaser.Input.Keyboard.JustDown(this.interactKey)) {
+    if (input.consumeInteractPressed()) {
       if (!this.tryOpenCurrentChest()) this.startInteractionHold('keyboard');
     }
 
-    if (this.holdInputSource === 'keyboard' && !this.interactKey.isDown) {
+    if (this.holdInputSource === 'keyboard' && !input.isInteractKeyDown()) {
       this.releaseInteractionHold('keyboard');
     }
 
